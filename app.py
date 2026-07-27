@@ -269,7 +269,7 @@ st.markdown("""
     div.stButton > button { border-radius: 8px; font-weight: 700; }
 
     /* =========================================================
-       STYLE DYNAMIQUE BOUTONS RADIO (VERT / ROUGE)
+       CORRECTION DÉFINITIVE PAR POSITION (1er = VERT / 2nd = ROUGE)
        ========================================================= */
     div[data-testid="stRadio"] > div[role="radiogroup"] {
         display: flex;
@@ -288,36 +288,35 @@ st.markdown("""
         transition: all 0.2s ease;
     }
 
-    /* 🟢 DÉTECTION ET SÉLECTION DU "OK / CONFORME" (VERT) */
-    div[data-testid="stRadio"] label:has(input[value*="Conforme"]:checked),
-    div[data-testid="stRadio"] label:has(input[value*="OK"]:checked) {
+    /* --- 1ère OPTION (✓ OK / Conforme) -> VERT QUAND COCHÉ --- */
+    div[data-testid="stRadio"] label:nth-of-type(1):has(input:checked) {
         background-color: #f0fdf4 !important;
         border-color: #16a34a !important;
         color: #15803d !important;
     }
-
-    /* Changement de la couleur de la puce radio interne en VERT */
-    div[data-testid="stRadio"] label:has(input[value*="Conforme"]:checked) div[role="radio"],
-    div[data-testid="stRadio"] label:has(input[value*="OK"]:checked) div[role="radio"] {
+    div[data-testid="stRadio"] label:nth-of-type(1):has(input:checked) div[role="radio"] {
         background-color: #16a34a !important;
         border-color: #16a34a !important;
-        box-shadow: 0 0 0 2px #16a34a !important;
+        box-shadow: inset 0 0 0 3px #ffffff !important;
     }
 
-    /* 🔴 DÉTECTION ET SÉLECTION DU "NOK / NON CONFORME" (ROUGE) */
-    div[data-testid="stRadio"] label:has(input[value*="Non conforme"]:checked),
-    div[data-testid="stRadio"] label:has(input[value*="NOK"]:checked) {
+    /* --- 2ème OPTION (✕ NOK / Non conforme) -> ROUGE QUAND COCHÉ --- */
+    div[data-testid="stRadio"] label:nth-of-type(2):has(input:checked) {
         background-color: #fef2f2 !important;
         border-color: #dc2626 !important;
         color: #b91c1c !important;
     }
-
-    /* Changement de la couleur de la puce radio interne en ROUGE */
-    div[data-testid="stRadio"] label:has(input[value*="Non conforme"]:checked) div[role="radio"],
-    div[data-testid="stRadio"] label:has(input[value*="NOK"]:checked) div[role="radio"] {
+    div[data-testid="stRadio"] label:nth-of-type(2):has(input:checked) div[role="radio"] {
         background-color: #dc2626 !important;
         border-color: #dc2626 !important;
-        box-shadow: 0 0 0 2px #dc2626 !important;
+        box-shadow: inset 0 0 0 3px #ffffff !important;
+    }
+
+    /* Isolement de la barre latérale pour ne pas modifier la navigation */
+    section[data-testid="stSidebar"] div[data-testid="stRadio"] label {
+        border-color: #e2e8f0 !important;
+        background-color: #ffffff !important;
+        color: #0f172a !important;
     }
     </style>
 """, unsafe_allow_html=True)
