@@ -269,58 +269,55 @@ st.markdown("""
     div.stButton > button { border-radius: 8px; font-weight: 700; }
 
     /* =========================================================
-       AMÉLIORATION GRAPHIQUE DES BOUTONS RADIO (CHOIX AUDIT)
+       STYLE DYNAMIQUE BOUTONS RADIO (VERT / ROUGE)
        ========================================================= */
-    
-    /* Agrandissement et mise en forme des options */
-    div[role="radiogroup"] {
+    div[data-testid="stRadio"] > div[role="radiogroup"] {
         display: flex;
-        gap: 12px;
-        margin-top: 8px;
-        margin-bottom: 8px;
+        flex-direction: column;
+        gap: 8px;
+        margin-top: 6px;
     }
 
-    div[role="radiogroup"] > label {
+    div[data-testid="stRadio"] label {
         background-color: #ffffff;
         border: 2px solid #cbd5e1;
         border-radius: 10px;
-        padding: 10px 18px !important;
+        padding: 10px 16px !important;
         font-weight: 700 !important;
-        font-size: 15px !important;
         cursor: pointer;
-        transition: all 0.2s ease-in-out;
-        flex: 1;
-        text-align: center;
-        box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+        transition: all 0.2s ease;
     }
 
-    /* Effet au survol */
-    div[role="radiogroup"] > label:hover {
-        border-color: #94a3b8;
-        background-color: #f1f5f9;
-    }
-
-    /* STYLES CONFORME / OK (SELECTIONNÉ) - VERT */
-    div[role="radiogroup"] > label:has(input[value*="Conforme"]:checked),
-    div[role="radiogroup"] > label:has(input[value*="OK"]:checked) {
+    /* 🟢 DÉTECTION ET SÉLECTION DU "OK / CONFORME" (VERT) */
+    div[data-testid="stRadio"] label:has(input[value*="Conforme"]:checked),
+    div[data-testid="stRadio"] label:has(input[value*="OK"]:checked) {
         background-color: #f0fdf4 !important;
         border-color: #16a34a !important;
         color: #15803d !important;
-        box-shadow: 0 0 0 1px #16a34a;
     }
 
-    /* STYLES NON CONFORME / NOK (SELECTIONNÉ) - ROUGE */
-    div[role="radiogroup"] > label:has(input[value*="Non conforme"]:checked),
-    div[role="radiogroup"] > label:has(input[value*="NOK"]:checked) {
+    /* Changement de la couleur de la puce radio interne en VERT */
+    div[data-testid="stRadio"] label:has(input[value*="Conforme"]:checked) div[role="radio"],
+    div[data-testid="stRadio"] label:has(input[value*="OK"]:checked) div[role="radio"] {
+        background-color: #16a34a !important;
+        border-color: #16a34a !important;
+        box-shadow: 0 0 0 2px #16a34a !important;
+    }
+
+    /* 🔴 DÉTECTION ET SÉLECTION DU "NOK / NON CONFORME" (ROUGE) */
+    div[data-testid="stRadio"] label:has(input[value*="Non conforme"]:checked),
+    div[data-testid="stRadio"] label:has(input[value*="NOK"]:checked) {
         background-color: #fef2f2 !important;
         border-color: #dc2626 !important;
         color: #b91c1c !important;
-        box-shadow: 0 0 0 1px #dc2626;
     }
 
-    /* Agrandi légèrement la puce de sélection */
-    div[role="radiogroup"] input[type="radio"] {
-        transform: scale(1.2);
+    /* Changement de la couleur de la puce radio interne en ROUGE */
+    div[data-testid="stRadio"] label:has(input[value*="Non conforme"]:checked) div[role="radio"],
+    div[data-testid="stRadio"] label:has(input[value*="NOK"]:checked) div[role="radio"] {
+        background-color: #dc2626 !important;
+        border-color: #dc2626 !important;
+        box-shadow: 0 0 0 2px #dc2626 !important;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -539,7 +536,7 @@ else:
             st.session_state[step_key] = 3
             st.rerun()
 
-    # ÉCRAN 3 : QUESTIONNAIRE AVEC CHOIX AMÉLIORÉS
+    # ÉCRAN 3 : QUESTIONNAIRE
     elif st.session_state[step_key] == 3:
         st.title(audit_title)
         
@@ -559,7 +556,6 @@ else:
                     q_counter += 1
                     st.markdown(f"**{q_counter}. {q}**")
                     
-                    # Boutons radio disposés horizontalement et stylisés
                     statut = st.radio(
                         f"hidden_label_{q_counter}", 
                         ["✓ OK / Conforme", "✕ NOK / Non conforme"], 
