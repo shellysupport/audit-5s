@@ -269,16 +269,18 @@ st.markdown("""
     div.stButton > button { border-radius: 8px; font-weight: 700; }
 
     /* =========================================================
-       CORRECTION DÉFINITIVE PAR POSITION (1er = VERT / 2nd = ROUGE)
+       BOUTONS RADIO : CORRECTION DES COULEURS (ZONE PRINCIPALE)
        ========================================================= */
-    div[data-testid="stRadio"] > div[role="radiogroup"] {
+    
+    /* Cible uniquement les boutons radio de la zone de contenu (pas la Sidebar) */
+    section.main div[data-testid="stRadio"] > div[role="radiogroup"] {
         display: flex;
         flex-direction: column;
         gap: 8px;
         margin-top: 6px;
     }
 
-    div[data-testid="stRadio"] label {
+    section.main div[data-testid="stRadio"] label {
         background-color: #ffffff;
         border: 2px solid #cbd5e1;
         border-radius: 10px;
@@ -288,35 +290,49 @@ st.markdown("""
         transition: all 0.2s ease;
     }
 
-    /* --- 1ère OPTION (✓ OK / Conforme) -> VERT QUAND COCHÉ --- */
-    div[data-testid="stRadio"] label:nth-of-type(1):has(input:checked) {
+    /* --- 1ère OPTION (✓ OK / Conforme) -> VERT TOTAL --- */
+    section.main div[data-testid="stRadio"] label:nth-of-type(1):has(input:checked) {
         background-color: #f0fdf4 !important;
         border-color: #16a34a !important;
         color: #15803d !important;
     }
-    div[data-testid="stRadio"] label:nth-of-type(1):has(input:checked) div[role="radio"] {
+    /* Puce radio interne verte */
+    section.main div[data-testid="stRadio"] label:nth-of-type(1):has(input:checked) span[data-testid="stRadioButtonIcon"] {
         background-color: #16a34a !important;
         border-color: #16a34a !important;
-        box-shadow: inset 0 0 0 3px #ffffff !important;
+    }
+    section.main div[data-testid="stRadio"] label:nth-of-type(1):has(input:checked) div[role="radio"] {
+        border-color: #16a34a !important;
+        background-color: #16a34a !important;
     }
 
-    /* --- 2ème OPTION (✕ NOK / Non conforme) -> ROUGE QUAND COCHÉ --- */
-    div[data-testid="stRadio"] label:nth-of-type(2):has(input:checked) {
+    /* --- 2ème OPTION (✕ NOK / Non conforme) -> ROUGE TOTAL --- */
+    section.main div[data-testid="stRadio"] label:nth-of-type(2):has(input:checked) {
         background-color: #fef2f2 !important;
         border-color: #dc2626 !important;
         color: #b91c1c !important;
     }
-    div[data-testid="stRadio"] label:nth-of-type(2):has(input:checked) div[role="radio"] {
+    /* Puce radio interne rouge */
+    section.main div[data-testid="stRadio"] label:nth-of-type(2):has(input:checked) span[data-testid="stRadioButtonIcon"] {
         background-color: #dc2626 !important;
         border-color: #dc2626 !important;
-        box-shadow: inset 0 0 0 3px #ffffff !important;
+    }
+    section.main div[data-testid="stRadio"] label:nth-of-type(2):has(input:checked) div[role="radio"] {
+        border-color: #dc2626 !important;
+        background-color: #dc2626 !important;
     }
 
-    /* Isolement de la barre latérale pour ne pas modifier la navigation */
+    /* =========================================================
+       SIDEBAR : REINITIALISATION DU STYLE NORMAL
+       ========================================================= */
     section[data-testid="stSidebar"] div[data-testid="stRadio"] label {
-        border-color: #e2e8f0 !important;
+        border: 1px solid #e2e8f0 !important;
         background-color: #ffffff !important;
         color: #0f172a !important;
+    }
+    section[data-testid="stSidebar"] div[data-testid="stRadio"] label:has(input:checked) {
+        border-color: #0f172a !important;
+        background-color: #f1f5f9 !important;
     }
     </style>
 """, unsafe_allow_html=True)
