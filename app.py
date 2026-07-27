@@ -17,7 +17,7 @@ from reportlab.lib.units import inch
 
 # --- CONFIGURATION DE LA PAGE ---
 st.set_page_config(
-    page_title="Audit 5S Hebdo",
+    page_title="Audits d'Atelier",
     page_icon="📋",
     layout="centered"
 )
@@ -36,7 +36,14 @@ def init_db():
     c.execute('''CREATE TABLE IF NOT EXISTS emails (id INTEGER PRIMARY KEY AUTOINCREMENT, label TEXT NOT NULL, email TEXT UNIQUE NOT NULL)''')
     c.execute('''CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT NOT NULL)''')
     
-    # Valeurs par défaut
+    c.execute('''CREATE TABLE IF NOT EXISTS questions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, 
+        type_audit TEXT NOT NULL, 
+        categorie TEXT NOT NULL, 
+        intitule TEXT NOT NULL,
+        ordre INTEGER DEFAULT 0
+    )''')
+    
     c.execute("SELECT COUNT(*) FROM auditeurs")
     if c.fetchone()[0] == 0:
         c.executemany("INSERT INTO auditeurs (nom) VALUES (?)", [("BESSEM FEKIH",), ("Jean Dupont",)])
@@ -49,9 +56,8 @@ def init_db():
     if c.fetchone()[0] == 0:
         c.executemany("INSERT INTO emails (label, email) VALUES (?, ?)", [("Responsable Atelier", "yosri.fadhly@somfy.com"),])
 
-    # Configuration par défaut
     default_config = {
-        "admin_password": "admin",  # Mot de passe pour la page Paramètres
+        "admin_password": "admin",
         "smtp_server": "smtp.gmail.com",
         "smtp_port": "587",
         "smtp_user": "yosri.fadhly@gmail.com",
@@ -60,8 +66,50 @@ def init_db():
     for k, v in default_config.items():
         c.execute("INSERT OR IGNORE INTO config (key, value) VALUES (?, ?)", (k, v))
 
+    c.execute("SELECT COUNT(*) FROM questions")
+    if c.fetchone()[0] == 0:
+        seed_default_questions(c)
+
     conn.commit()
     conn.close()
+
+def seed_default_questions(cursor):
+    q_5s = [
+        ("S1 – DÉBARRASSER", "Est-ce qu'il y a du matériel / fournitures / machines / équipement Inutiles ?"),
+        ("S1 – DÉBARRASSER", "Est-ce qu'il y a du matériel / fourniture / machines / équipement Endommagé ?"),
+        ("S2 – RANGER", "Est-ce que chaque matériel a un emplacement défini ?"),
+        ("S2 – RANGER", "Est-ce que chaque matériel est à son emplacement (zoning + affectation) ?"),
+        ("S2 – RANGER", "Est-ce que rien ne traîne en dehors des emplacements ?"),
+        ("S3 – TENIR PROPRE", "Est-ce que le poste et ses abords sont propres ?"),
+        ("S3 – TENIR PROPRE", "Est-ce qu'il n'y a pas des fuites et/ou de salissures ?"),
+        ("S4 – STANDARDISER", "Est-ce que le standard 5S est disponible ?"),
+        ("S4 – STANDARDISER", "Est-ce que le point propreté standard est mis en place ?"),
+        ("S5 – MAINTENIR", "Est-ce que la fiche d'audit quotidien est renseignée et les actions traitées ?"),
+        ("S5 – MAINTENIR", "Quelles sont les dernières actions réalisées par le GAP ?")
+    ]
+    for cat, q in q_5s:
+        cursor.execute("INSERT INTO questions (type_audit, categorie, intitule) VALUES (?, ?, ?)", ("5S", cat, q))
+
+    q_am = [
+        ("État du poste de travail", "Le management visuel est présent et en place."),
+        ("État du poste de travail", "Le poste est propre et organisé conformément aux standards."),
+        ("État du poste de travail", "Aucun élément dangereux ou non conforme (fuite, câble dénudé, pièce au sol...)."),
+        ("Kit AM et EPI", "Le kit AM est complet, conforme à la liste standardisée et identifié (numéro de ligne/poste)."),
+        ("Kit AM et EPI", "Les EPI nécessaires sont disponibles, conformes et en bon état."),
+        ("Kit AM et EPI", "Le kit est facilement accessible et ne gêne pas le flux de production."),
+        ("Standard d'AM", "Un unique standard AM est affiché et accessible à proximité du poste."),
+        ("Standard d'AM", "Les instructions correspondent bien à l'état actuel du poste (FI à jour)."),
+        ("Réalisation des Tâches", "Les opérateurs réalisent les tâches selon le standard et dans l'ordre défini."),
+        ("Réalisation des Tâches", "La fréquence de réalisation (quotidienne / hebdo / mensuelle) est respectée."),
+        ("Réalisation des Tâches", "Les outils et EPI utilisés sont adaptés à chaque action d'AM et sont bien ceux prévus dans le standard."),
+        ("Réalisation des Tâches", "Les opérateurs signalent les écarts observés (défauts, bruit, jeu, fuite...)."),
+        ("Traçabilité et Enregistrement", "Les anomalies détectées sont enregistrées dans le QRCI."),
+        ("Traçabilité et Enregistrement", "Les bons de travail sont émis lorsque nécessaire et transmis à la maintenance."),
+        ("Traçabilité et Enregistrement", "Le tableau de bord AM (SIM, taux de complétion, anomalies...) est mis à jour régulièrement en mode projet."),
+        ("Traçabilité et Enregistrement", "Les actions issues des audits AM précédents sont suivies en SIM PROD et clôturées.")
+    ]
+    for cat, q in q_am:
+        cursor.execute("INSERT INTO questions (type_audit, categorie, intitule) VALUES (?, ?, ?)", ("AM", cat, q))
 
 init_db()
 
@@ -102,8 +150,21 @@ def delete_item(table, item_id):
     conn.commit()
     conn.close()
 
+def get_questions_dict(type_audit):
+    conn = get_db_connection()
+    rows = conn.execute("SELECT categorie, intitule FROM questions WHERE type_audit = ? ORDER BY id ASC", (type_audit,)).fetchall()
+    conn.close()
+    
+    questions_dict = {}
+    for r in rows:
+        cat = r['categorie']
+        if cat not in questions_dict:
+            questions_dict[cat] = []
+        questions_dict[cat].append(r['intitule'])
+    return questions_dict
+
 # --- FONCTION DE GÉNÉRATION DU PDF ---
-def generate_pdf_report(idp, auditeur, zone, equipe, semaine, annee, reponses, questions_5s, taux, nb_ok, nb_nok, total_q):
+def generate_pdf_report(audit_title, idp, auditeur, zone, equipe, semaine, annee, reponses, questions_dict, taux, nb_ok, nb_nok, total_q):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36)
     story = []
@@ -115,7 +176,7 @@ def generate_pdf_report(idp, auditeur, zone, equipe, semaine, annee, reponses, q
     text_normal = ParagraphStyle('TextNormal', parent=styles['Normal'], fontSize=9, leading=12)
     text_comment = ParagraphStyle('TextComment', parent=styles['Italic'], fontSize=8, leading=10, textColor=colors.HexColor('#475569'))
     
-    story.append(Paragraph("RAPPORT D'AUDIT 5S HEBDO", title_style))
+    story.append(Paragraph(f"RAPPORT D'AUDIT - {audit_title.upper()}", title_style))
     story.append(Spacer(1, 6))
     
     info_data = [
@@ -137,9 +198,8 @@ def generate_pdf_report(idp, auditeur, zone, equipe, semaine, annee, reponses, q
     story.append(Spacer(1, 10))
     
     q_counter = 0
-    for cat_index, (category, questions) in enumerate(questions_5s.items(), start=1):
-        s_code = f"S{cat_index}"
-        story.append(Paragraph(f"<b>{s_code} - {category}</b>", header_s_style))
+    for category, questions in questions_dict.items():
+        story.append(Paragraph(f"<b>{category}</b>", header_s_style))
         
         table_q_data = []
         for q in questions:
@@ -149,14 +209,14 @@ def generate_pdf_report(idp, auditeur, zone, equipe, semaine, annee, reponses, q
             comment_txt = rep.get("comment", "")
             photo_file = rep.get("photo", None)
             
-            if "Conforme" in statut_txt and "Non" not in statut_txt:
-                status_p = Paragraph("<font color='#16a34a'><b>✓ CONFORME</b></font>", text_normal)
+            if "Conforme" in statut_txt or statut_txt == "OK":
+                status_p = Paragraph("<font color='#16a34a'><b>✓ OK / CONFORME</b></font>", text_normal)
             else:
-                status_p = Paragraph("<font color='#dc2626'><b>✕ NON CONFORME</b></font>", text_normal)
+                status_p = Paragraph("<font color='#dc2626'><b>✕ NOK / NON CONFORME</b></font>", text_normal)
             
             q_content = [Paragraph(q, text_bold)]
             if comment_txt:
-                q_content.append(Paragraph(f"<i>Remarque : {comment_txt}</i>", text_comment))
+                q_content.append(Paragraph(f"<i>Observation : {comment_txt}</i>", text_comment))
                 
             img_element = ""
             if photo_file is not None:
@@ -185,13 +245,17 @@ def generate_pdf_report(idp, auditeur, zone, equipe, semaine, annee, reponses, q
     buffer.seek(0)
     return buffer.getvalue()
 
-# --- STYLES CSS ---
+# --- STYLES CSS PERSONNALISÉS ---
 st.markdown("""
     <style>
     .stApp { background-color: #f8fafc; }
+    
+    /* Titres de catégories */
     .s-header { display: flex; align-items: center; gap: 10px; margin-top: 25px; margin-bottom: 15px; }
     .badge-s { background-color: #0f172a; color: white; font-weight: 800; padding: 4px 10px; border-radius: 6px; font-size: 13px; }
     .s-title-text { font-size: 16px; font-weight: 800; color: #0f172a; letter-spacing: -0.3px; }
+    
+    /* Cartes d'informations & score */
     .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 20px; }
     .info-card { background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.02); }
     .info-label { font-size: 11px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; }
@@ -203,24 +267,77 @@ st.markdown("""
     .score-detail { font-size: 14px; font-weight: 600; margin-top: 8px; color: #cbd5e1; }
     .alert-info-custom { background-color: #dbeafe; border: 1px solid #bfdbfe; color: #1e40af; border-radius: 8px; padding: 14px; font-weight: 600; margin-top: 15px; }
     div.stButton > button { border-radius: 8px; font-weight: 700; }
+
+    /* =========================================================
+       AMÉLIORATION GRAPHIQUE DES BOUTONS RADIO (CHOIX AUDIT)
+       ========================================================= */
+    
+    /* Agrandissement et mise en forme des options */
+    div[role="radiogroup"] {
+        display: flex;
+        gap: 12px;
+        margin-top: 8px;
+        margin-bottom: 8px;
+    }
+
+    div[role="radiogroup"] > label {
+        background-color: #ffffff;
+        border: 2px solid #cbd5e1;
+        border-radius: 10px;
+        padding: 10px 18px !important;
+        font-weight: 700 !important;
+        font-size: 15px !important;
+        cursor: pointer;
+        transition: all 0.2s ease-in-out;
+        flex: 1;
+        text-align: center;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+    }
+
+    /* Effet au survol */
+    div[role="radiogroup"] > label:hover {
+        border-color: #94a3b8;
+        background-color: #f1f5f9;
+    }
+
+    /* STYLES CONFORME / OK (SELECTIONNÉ) - VERT */
+    div[role="radiogroup"] > label:has(input[value*="Conforme"]:checked),
+    div[role="radiogroup"] > label:has(input[value*="OK"]:checked) {
+        background-color: #f0fdf4 !important;
+        border-color: #16a34a !important;
+        color: #15803d !important;
+        box-shadow: 0 0 0 1px #16a34a;
+    }
+
+    /* STYLES NON CONFORME / NOK (SELECTIONNÉ) - ROUGE */
+    div[role="radiogroup"] > label:has(input[value*="Non conforme"]:checked),
+    div[role="radiogroup"] > label:has(input[value*="NOK"]:checked) {
+        background-color: #fef2f2 !important;
+        border-color: #dc2626 !important;
+        color: #b91c1c !important;
+        box-shadow: 0 0 0 1px #dc2626;
+    }
+
+    /* Agrandi légèrement la puce de sélection */
+    div[role="radiogroup"] input[type="radio"] {
+        transform: scale(1.2);
+    }
     </style>
 """, unsafe_allow_html=True)
 
 # --- NAVIGATION SIDEBAR ---
 st.sidebar.title("📌 Menu")
-page = st.sidebar.radio("Navigation", ["📋 Réaliser un Audit", "⚙️ Paramètres / Admin"])
+page = st.sidebar.radio("Navigation", ["📋 Audit 5S Hebdo", "🛠️ Audit Auto Maintenance", "⚙️ Paramètres / Admin"])
 
-# Variable de session pour la connexion Admin
 if "admin_authenticated" not in st.session_state:
     st.session_state.admin_authenticated = False
 
 # ==============================================================================
-# PAGE : PARAMÈTRES / ADMIN (PROTÉGÉE PAR MOT DE PASSE)
+# PAGE : PARAMÈTRES / ADMIN
 # ==============================================================================
 if page == "⚙️ Paramètres / Admin":
     st.title("⚙️ Paramètres de l'application")
 
-    # Si l'utilisateur n'est pas encore identifié en tant qu'admin
     if not st.session_state.admin_authenticated:
         st.subheader("🔒 Accès Administrateur")
         input_pwd = st.text_input("Saisissez le mot de passe de configuration :", type="password")
@@ -233,15 +350,70 @@ if page == "⚙️ Paramètres / Admin":
             else:
                 st.error("❌ Mot de passe incorrect.")
     
-    # Si l'admin est connecté, afficher le panneau d'administration
     else:
         if st.sidebar.button("🚪 Déconnexion Admin"):
             st.session_state.admin_authenticated = False
             st.rerun()
 
-        tab1, tab2, tab3, tab4 = st.tabs(["👤 Auditeurs", "🏭 Zones / Îlots", "📧 Emails Responsables", "🔐 Sécurité & SMTP"])
+        tab1, tab2, tab3, tab4, tab5 = st.tabs(["📝 Checklists / Questions", "👤 Auditeurs", "🏭 Zones / Îlots", "📧 Emails Responsables", "🔐 Sécurité & SMTP"])
         
         with tab1:
+            st.subheader("📝 Modifier les Checklists d'Audit")
+            selected_audit_type = st.selectbox("Choisir l'audit à modifier :", ["5S", "AM"], format_func=lambda x: "Audit 5S Hebdo" if x == "5S" else "Audit Auto Maintenance (AM)")
+            
+            conn = get_db_connection()
+            q_items = conn.execute("SELECT * FROM questions WHERE type_audit = ? ORDER BY id ASC", (selected_audit_type,)).fetchall()
+            conn.close()
+
+            cats = list(dict.fromkeys([q['categorie'] for q in q_items])) if q_items else []
+            
+            st.markdown("---")
+            st.markdown("#### Questions existantes :")
+            if not q_items:
+                st.info("Aucune question enregistrée pour cet audit.")
+            else:
+                for c in cats:
+                    st.markdown(f"**📌 {c}**")
+                    cat_qs = [q for q in q_items if q['categorie'] == c]
+                    for q_row in cat_qs:
+                        col1, col2 = st.columns([5, 1])
+                        col1.write(f"• {q_row['intitule']}")
+                        if col2.button("❌", key=f"del_q_{q_row['id']}"):
+                            delete_item("questions", q_row['id'])
+                            st.rerun()
+
+            st.markdown("---")
+            st.markdown("#### ➕ Ajouter une nouvelle question")
+            
+            existing_cats = cats if cats else (["S1 – DÉBARRASSER", "S2 – RANGER", "S3 – TENIR PROPRE", "S4 – STANDARDISER", "S5 – MAINTENIR"] if selected_audit_type == "5S" else ["État du poste de travail", "Kit AM et EPI", "Standard d'AM", "Réalisation des Tâches", "Traçabilité et Enregistrement"])
+            
+            cat_option = st.radio("Catégorie :", ["Catégorie existante", "Créer une nouvelle catégorie"], horizontal=True)
+            
+            if cat_option == "Catégorie existante":
+                cat_val = st.selectbox("Sélectionner la catégorie :", options=existing_cats)
+            else:
+                cat_val = st.text_input("Nom de la nouvelle catégorie :", key="new_cat_name")
+
+            new_q_text = st.text_area("Intitulé du critère / question d'audit :", key="new_q_text")
+            
+            if st.button("Ajouter la question", use_container_width=True):
+                if cat_val and new_q_text.strip():
+                    add_item("questions", ["type_audit", "categorie", "intitule"], [selected_audit_type, cat_val.strip(), new_q_text.strip()])
+                    st.rerun()
+                else:
+                    st.error("Veuillez remplir la catégorie et l'intitulé.")
+
+            st.markdown("---")
+            if st.button("🔄 Réinitialiser les questions par défaut (5S & AM)"):
+                conn = get_db_connection()
+                conn.execute("DELETE FROM questions")
+                seed_default_questions(conn.cursor())
+                conn.commit()
+                conn.close()
+                st.success("Checklists réinitialisées aux valeurs d'origine !")
+                st.rerun()
+
+        with tab2:
             st.subheader("Liste des Auditeurs")
             for a in get_items("auditeurs"):
                 c1, c2 = st.columns([4, 1])
@@ -256,7 +428,7 @@ if page == "⚙️ Paramètres / Admin":
                     add_item("auditeurs", ["nom"], [new_aud.strip()])
                     st.rerun()
 
-        with tab2:
+        with tab3:
             st.subheader("Liste des Zones")
             for z in get_items("zones"):
                 c1, c2 = st.columns([4, 1])
@@ -271,7 +443,7 @@ if page == "⚙️ Paramètres / Admin":
                     add_item("zones", ["nom"], [new_z.strip()])
                     st.rerun()
 
-        with tab3:
+        with tab4:
             st.subheader("Adresses E-mails des Destinataires")
             for e in get_items("emails"):
                 c1, c2 = st.columns([4, 1])
@@ -287,7 +459,7 @@ if page == "⚙️ Paramètres / Admin":
                     add_item("emails", ["label", "email"], [lbl.strip(), em.strip()])
                     st.rerun()
 
-        with tab4:
+        with tab5:
             st.subheader("🔑 Changer le mot de passe d'accès aux Paramètres")
             current_pwd = get_config_val("admin_password")
             new_pwd = st.text_input("Nouveau mot de passe Admin", type="password", value=current_pwd)
@@ -314,172 +486,177 @@ if page == "⚙️ Paramètres / Admin":
                 st.success("✅ Configuration SMTP enregistrée !")
 
 # ==============================================================================
-# PAGE : AUDIT 5S (ACCÈS LIBRE)
+# PAGES : AUDITS (5S & AUTO MAINTENANCE)
 # ==============================================================================
 else:
     db_auditeurs = [a['nom'] for a in get_items("auditeurs")]
     db_zones = [z['nom'] for z in get_items("zones")]
     db_emails = get_items("emails")
 
-    QUESTIONS_5S = {
-        "S1 – DÉBARRASSER": [
-            "Est-ce qu'il y a du matériel / fournitures / machines / équipement Inutiles ?",
-            "Est-ce qu'il y a du matériel / fourniture / machines / équipement Endommagé ?"
-        ],
-        "S2 – RANGER": [
-            "Est-ce que chaque matériel a un emplacement défini ?",
-            "Est-ce que chaque matériel est à son emplacement (zoning + affectation) ?",
-            "Est-ce que rien ne traîne en dehors des emplacements ?"
-        ],
-        "S3 – TENIR PROPRE": [
-            "Est-ce que le poste et ses abords sont propres ?",
-            "Est-ce qu'il n'y a pas des fuites et/ou de salissures ?"
-        ],
-        "S4 – STANDARDISER": [
-            "Est-ce que le standard 5S est disponible ?",
-            "Est-ce que le point propreté standard est mis en place ?"
-        ],
-        "S5 – MAINTENIR": [
-            "Est-ce que la fiche d'audit quotidien est renseignée et les actions traitées ?",
-            "Quelles sont les dernières actions réalisées par le GAP ?"
-        ]
-    }
-    TOTAL_QUESTIONS = sum(len(q) for q in QUESTIONS_5S.values())
+    if page == "📋 Audit 5S Hebdo":
+        audit_title = "Audit 5S Hebdo"
+        type_code = "5S"
+        prefix_key = "5s"
+    else:
+        audit_title = "Audit Auto Maintenance"
+        type_code = "AM"
+        prefix_key = "am"
 
-    if "step" not in st.session_state: st.session_state.step = 1
-    if "reponses" not in st.session_state: st.session_state.reponses = {}
-    if "idp" not in st.session_state: st.session_state.idp = f"022026301{random.randint(10,99)}"
+    questions_dict = get_questions_dict(type_code)
+    total_questions = sum(len(q) for q in questions_dict.values())
+
+    step_key = f"{prefix_key}_step"
+    reponses_key = f"{prefix_key}_reponses"
+    idp_key = f"{prefix_key}_idp"
+
+    if step_key not in st.session_state: st.session_state[step_key] = 1
+    if reponses_key not in st.session_state: st.session_state[reponses_key] = {}
+    if idp_key not in st.session_state: st.session_state[idp_key] = f"022026301{random.randint(10,99)}"
 
     # ÉCRAN 1 : IDENTIFICATION
-    if st.session_state.step == 1:
-        st.title("AUDIT 5S HEBDO")
+    if st.session_state[step_key] == 1:
+        st.title(f"📋 {audit_title.upper()}")
         aud_sel = st.selectbox("AUDITEUR (NOM & PRÉNOM)", options=["— Sélectionner —"] + db_auditeurs)
         if st.button("Continuer →"):
             if aud_sel == "— Sélectionner —":
                 st.error("Sélectionnez un auditeur.")
             else:
-                st.session_state.auditeur = aud_sel
-                st.session_state.step = 2
+                st.session_state[f"{prefix_key}_auditeur"] = aud_sel
+                st.session_state[step_key] = 2
                 st.rerun()
 
     # ÉCRAN 2 : PARAMÈTRES AUDIT
-    elif st.session_state.step == 2:
+    elif st.session_state[step_key] == 2:
         if st.button("← Retour"):
-            st.session_state.step = 1
+            st.session_state[step_key] = 1
             st.rerun()
         st.title("PARAMÈTRES DE L'AUDIT")
-        st.session_state.zone = st.selectbox("ZONE / ÎLOT", options=db_zones if db_zones else ["Aucune zone"])
-        st.session_state.equipe = st.selectbox("ÉQUIPE", options=["Équipe1", "Équipe2", "Équipe3", "Équipe Nuit"])
-        st.session_state.semaine = st.number_input("SEMAINE (ISO)", value=datetime.now().isocalendar()[1])
-        st.session_state.annee = st.number_input("ANNÉE", value=datetime.now().year)
+        st.session_state[f"{prefix_key}_zone"] = st.selectbox("ZONE / ÎLOT", options=db_zones if db_zones else ["Aucune zone"])
+        st.session_state[f"{prefix_key}_equipe"] = st.selectbox("ÉQUIPE", options=["Équipe1", "Équipe2", "Équipe3", "Équipe Nuit"])
+        st.session_state[f"{prefix_key}_semaine"] = st.number_input("SEMAINE (ISO)", value=datetime.now().isocalendar()[1])
+        st.session_state[f"{prefix_key}_annee"] = st.number_input("ANNÉE", value=datetime.now().year)
         if st.button("Démarrer l'audit →"):
-            st.session_state.step = 3
+            st.session_state[step_key] = 3
             st.rerun()
 
-    # ÉCRAN 3 : QUESTIONNAIRE
-    elif st.session_state.step == 3:
-        q_counter = 0
-        for cat_index, (category, questions) in enumerate(QUESTIONS_5S.items(), start=1):
-            s_code = f"S{cat_index}"
-            st.markdown(f'''
-                <div class="s-header">
-                    <span class="badge-s">{s_code}</span>
-                    <span class="s-title-text">{category}</span>
-                </div>
-            ''', unsafe_allow_html=True)
-            
-            for q in questions:
-                q_counter += 1
-                statut = st.radio(q, ["✓ Conforme", "✕ Non conforme"], key=f"q_{q_counter}", index=None)
-                photo = st.file_uploader("📷 PRENDRE / JOINDRE UNE PHOTO", key=f"p_{q_counter}", type=["png", "jpg", "jpeg"])
-                comment = st.text_input("Commentaire (optionnel)", key=f"c_{q_counter}", placeholder="Commentaire (optionnel)")
+    # ÉCRAN 3 : QUESTIONNAIRE AVEC CHOIX AMÉLIORÉS
+    elif st.session_state[step_key] == 3:
+        st.title(audit_title)
+        
+        if total_questions == 0:
+            st.warning("⚠️ Aucune question enregistrée pour cet audit. Rendez-vous dans les Paramètres/Admin pour ajouter des questions.")
+        else:
+            q_counter = 0
+            for category, questions in questions_dict.items():
+                st.markdown(f'''
+                    <div class="s-header">
+                        <span class="badge-s">📌</span>
+                        <span class="s-title-text">{category}</span>
+                    </div>
+                ''', unsafe_allow_html=True)
                 
-                if statut:
-                    st.session_state.reponses[q_counter] = {
-                        "q": q, 
-                        "statut": statut, 
-                        "photo": photo, 
-                        "comment": comment, 
-                        "cat": category
-                    }
-                st.markdown("---")
+                for q in questions:
+                    q_counter += 1
+                    st.markdown(f"**{q_counter}. {q}**")
+                    
+                    # Boutons radio disposés horizontalement et stylisés
+                    statut = st.radio(
+                        f"hidden_label_{q_counter}", 
+                        ["✓ OK / Conforme", "✕ NOK / Non conforme"], 
+                        key=f"{prefix_key}_q_{q_counter}", 
+                        index=None,
+                        label_visibility="collapsed"
+                    )
+                    
+                    photo = st.file_uploader("📷 PRENDRE / JOINDRE UNE PHOTO", key=f"{prefix_key}_p_{q_counter}", type=["png", "jpg", "jpeg"])
+                    comment = st.text_input("Observation / Actions à accomplir", key=f"{prefix_key}_c_{q_counter}", placeholder="Observation (optionnel)")
+                    
+                    if statut:
+                        st.session_state[reponses_key][q_counter] = {
+                            "q": q, 
+                            "statut": statut, 
+                            "photo": photo, 
+                            "comment": comment, 
+                            "cat": category
+                        }
+                    st.markdown("<hr style='margin: 15px 0; border-color: #e2e8f0;'>", unsafe_allow_html=True)
 
-        nb_rep = len(st.session_state.reponses)
-        st.progress(nb_rep / TOTAL_QUESTIONS)
-        st.write(f"**{nb_rep} / {TOTAL_QUESTIONS} questions répondues**")
+            nb_rep = len(st.session_state[reponses_key])
+            st.progress(nb_rep / total_questions)
+            st.write(f"**{nb_rep} / {total_questions} questions répondues**")
 
-        if st.button("✓ Valider et générer le rapport"):
-            if nb_rep < TOTAL_QUESTIONS:
-                st.warning(f"⚠️ Veuillez répondre à toutes les questions ({nb_rep}/{TOTAL_QUESTIONS}).")
-            else:
-                st.session_state.step = 4
-                st.rerun()
+            if st.button("✓ Valider et générer le rapport"):
+                if nb_rep < total_questions:
+                    st.warning(f"⚠️ Veuillez répondre à toutes les questions ({nb_rep}/{total_questions}).")
+                else:
+                    st.session_state[step_key] = 4
+                    st.rerun()
 
     # ÉCRAN 4 : RAPPORT + ENVOI MAIL
-    elif st.session_state.step == 4:
+    elif st.session_state[step_key] == 4:
         if st.button("← Retour"):
-            st.session_state.step = 3
+            st.session_state[step_key] = 3
             st.rerun()
 
-        st.title("RAPPORT D'AUDIT 5S")
+        st.title(f"RAPPORT - {audit_title.upper()}")
 
-        nb_ok = sum(1 for r in st.session_state.reponses.values() if "Conforme" in r["statut"] and "Non" not in r["statut"])
-        nb_nok = TOTAL_QUESTIONS - nb_ok
-        taux = int((nb_ok / TOTAL_QUESTIONS) * 100)
+        reponses = st.session_state[reponses_key]
+        nb_ok = sum(1 for r in reponses.values() if "Conforme" in r["statut"] or "OK" in r["statut"])
+        nb_nok = total_questions - nb_ok
+        taux = int((nb_ok / total_questions) * 100) if total_questions > 0 else 0
+
+        idp = st.session_state[idp_key]
+        auditeur = st.session_state[f"{prefix_key}_auditeur"]
+        zone = st.session_state[f"{prefix_key}_zone"]
+        equipe = st.session_state[f"{prefix_key}_equipe"]
+        semaine = st.session_state[f"{prefix_key}_semaine"]
+        annee = st.session_state[f"{prefix_key}_annee"]
 
         st.markdown(f"""
             <div class="info-grid">
-                <div class="info-card"><div class="info-label">IDP</div><div class="info-val">{st.session_state.idp}</div></div>
-                <div class="info-card"><div class="info-label">AUDITEUR</div><div class="info-val">{st.session_state.auditeur}</div></div>
-                <div class="info-card"><div class="info-label">ZONE / ÎLOT</div><div class="info-val">{st.session_state.zone}</div></div>
-                <div class="info-card"><div class="info-label">ÉQUIPE</div><div class="info-val">{st.session_state.equipe}</div></div>
-                <div class="info-card"><div class="info-label">PÉRIODE</div><div class="info-val">Semaine {st.session_state.semaine} / {st.session_state.annee}</div></div>
-                <div class="info-card"><div class="info-label">POINTS NON CONFORMES</div><div class="info-val-nok">{nb_nok} / {TOTAL_QUESTIONS}</div></div>
+                <div class="info-card"><div class="info-label">IDP</div><div class="info-val">{idp}</div></div>
+                <div class="info-card"><div class="info-label">AUDITEUR</div><div class="info-val">{auditeur}</div></div>
+                <div class="info-card"><div class="info-label">ZONE / ÎLOT</div><div class="info-val">{zone}</div></div>
+                <div class="info-card"><div class="info-label">ÉQUIPE</div><div class="info-val">{equipe}</div></div>
+                <div class="info-card"><div class="info-label">PÉRIODE</div><div class="info-val">Semaine {semaine} / {annee}</div></div>
+                <div class="info-card"><div class="info-label">POINTS NON CONFORMES</div><div class="info-val-nok">{nb_nok} / {total_questions}</div></div>
             </div>
         """, unsafe_allow_html=True)
 
         st.markdown(f"""
             <div class="score-banner">
                 <div class="score-percent">{taux}%</div>
-                <div class="score-subtitle">TAUX DE CONFORMITÉ 5S</div>
-                <div class="score-detail">✓ {nb_ok} conformes &nbsp;&nbsp;•&nbsp;&nbsp; ✕ {nb_nok} non conformes</div>
+                <div class="score-subtitle">TAUX DE CONFORMITÉ</div>
+                <div class="score-detail">✓ {nb_ok} OK &nbsp;&nbsp;•&nbsp;&nbsp; ✕ {nb_nok} NOK</div>
             </div>
         """, unsafe_allow_html=True)
 
         pdf_bytes = generate_pdf_report(
-            st.session_state.idp,
-            st.session_state.auditeur,
-            st.session_state.zone,
-            st.session_state.equipe,
-            st.session_state.semaine,
-            st.session_state.annee,
-            st.session_state.reponses,
-            QUESTIONS_5S,
-            taux, nb_ok, nb_nok, TOTAL_QUESTIONS
+            audit_title, idp, auditeur, zone, equipe, semaine, annee,
+            reponses, questions_dict, taux, nb_ok, nb_nok, total_questions
         )
 
         q_counter = 0
-        for cat_index, (category, questions) in enumerate(QUESTIONS_5S.items(), start=1):
-            s_code = f"S{cat_index}"
+        for category, questions in questions_dict.items():
             st.markdown(f'''
                 <div class="s-header">
-                    <span class="badge-s">{s_code}</span>
+                    <span class="badge-s">📌</span>
                     <span class="s-title-text">{category}</span>
                 </div>
             ''', unsafe_allow_html=True)
             
             for q in questions:
                 q_counter += 1
-                rep = st.session_state.reponses.get(q_counter, {})
+                rep = reponses.get(q_counter, {})
                 statut_txt = rep.get("statut", "")
                 
-                if "Conforme" in statut_txt and "Non" not in statut_txt:
+                if "Conforme" in statut_txt or "OK" in statut_txt:
                     st.markdown(f"✅ **{q}**")
                 else:
                     st.markdown(f"❌ **{q}**")
                 
                 if rep.get("comment"):
-                    st.caption(f"💬 *Remarque : {rep['comment']}*")
+                    st.caption(f"💬 *Observation : {rep['comment']}*")
                 
                 if rep.get("photo"):
                     st.image(rep["photo"], width=240)
@@ -488,7 +665,7 @@ else:
 
         st.markdown(f"""
             <div class="alert-info-custom">
-                ✓ Résultat de l'audit (IDP {st.session_state.idp}) enregistré sur cet appareil.
+                ✓ Résultat enregistré (IDP {idp}).
             </div>
         """, unsafe_allow_html=True)
         st.write("")
@@ -496,7 +673,7 @@ else:
         destinataires_opts = {f"{e['label']} ({e['email']})": e['email'] for e in db_emails}
         
         if destinataires_opts:
-            selected_dest = st.selectbox("✉️ Choisir le responsable destinataire :", options=list(destinataires_opts.keys()))
+            selected_dest = st.selectbox("✉️ Choisir le responsable destinataire :", options=list(destinataires_opts.keys()), key=f"{prefix_key}_dest")
             target_email = destinataires_opts[selected_dest]
         else:
             st.warning("⚠️ Aucune adresse mail configurée dans la page Paramètres.")
@@ -508,13 +685,13 @@ else:
             st.download_button(
                 label="⬇ Télécharger PDF",
                 data=pdf_bytes,
-                file_name=f"Rapport_Audit_5S_{st.session_state.zone}_S{st.session_state.semaine}.pdf",
+                file_name=f"Rapport_{audit_title.replace(' ', '_')}_{zone}_S{semaine}.pdf",
                 mime="application/pdf",
                 use_container_width=True
             )
                 
         with c_btn2:
-            if st.button("✉ Envoyer au responsable", use_container_width=True):
+            if st.button("✉ Envoyer au responsable", use_container_width=True, key=f"{prefix_key}_send"):
                 if not target_email:
                     st.error("⚠️ Aucun destinataire sélectionné.")
                 else:
@@ -527,24 +704,24 @@ else:
                         msg = MIMEMultipart()
                         msg['From'] = SMTP_USER
                         msg['To'] = target_email
-                        msg['Subject'] = f"Rapport Audit 5S - {st.session_state.zone} (Semaine {st.session_state.semaine})"
+                        msg['Subject'] = f"Rapport {audit_title} - {zone} (Semaine {semaine})"
 
                         body_text = f"""Bonjour,
 
-Veuillez trouver ci-joint le rapport d'audit 5S détaillé au format PDF.
+Veuillez trouver ci-joint le rapport pour l'audit '{audit_title}' au format PDF.
 
 Résumé rapide :
-- IDP : {st.session_state.idp}
-- Auditeur : {st.session_state.auditeur}
-- Zone : {st.session_state.zone}
+- IDP : {idp}
+- Auditeur : {auditeur}
+- Zone : {zone}
 - Taux de conformité : {taux}% ({nb_ok} OK / {nb_nok} NOK)
 
 Cordialement,
-Application Audit 5S
+Application d'Audit
 """
                         msg.attach(MIMEText(body_text, 'plain'))
 
-                        pdf_filename = f"Rapport_Audit_5S_{st.session_state.zone}_Semaine_{st.session_state.semaine}.pdf"
+                        pdf_filename = f"Rapport_{audit_title.replace(' ', '_')}_{zone}_Semaine_{semaine}.pdf"
                         part = MIMEApplication(pdf_bytes, Name=pdf_filename)
                         part['Content-Disposition'] = f'attachment; filename="{pdf_filename}"'
                         msg.attach(part)
