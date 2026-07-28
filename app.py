@@ -489,7 +489,7 @@ if page == "📊 Historique des Audits":
 
 
                     
-                )
+                
             else:
                 st.warning("Détails non disponibles pour cet ancien audit.")
 
