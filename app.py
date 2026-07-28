@@ -56,11 +56,17 @@ def init_db():
         nb_ok INTEGER,
         nb_nok INTEGER,
         total_questions INTEGER,
-        details_json TEXT
+        details_json TEXT,
+        appareil TEXT
     )''')
 
     try:
         c.execute("ALTER TABLE historique_audits ADD COLUMN details_json TEXT")
+    except sqlite3.OperationalError:
+        pass
+
+    try:
+        c.execute("ALTER TABLE historique_audits ADD COLUMN appareil TEXT")
     except sqlite3.OperationalError:
         pass
 
@@ -182,7 +188,7 @@ def delete_item(table, item_id):
     conn.commit()
     conn.close()
 
-def save_audit_in_history(idp, type_audit, auditeur, zone, equipe, semaine, annee, score, nb_ok, nb_nok, total_q, reponses_dict_raw):
+def save_audit_in_history(idp, type_audit, auditeur, zone, equipe, semaine, annee, score, nb_ok, nb_nok, total_q, reponses_dict_raw, appareil):
     conn = get_db_connection()
     c = conn.cursor()
     c.execute("SELECT id FROM historique_audits WHERE idp = ?", (idp,))
@@ -198,9 +204,9 @@ def save_audit_in_history(idp, type_audit, auditeur, zone, equipe, semaine, anne
         details_str = json.dumps(serializable_reponses)
 
         c.execute('''INSERT INTO historique_audits 
-                    (idp, type_audit, auditeur, zone, equipe, semaine, annee, date_audit, score_pourcentage, nb_ok, nb_nok, total_questions, details_json)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
-                  (idp, type_audit, auditeur, zone, equipe, semaine, annee, date_str, score, nb_ok, nb_nok, total_q, details_str))
+                    (idp, type_audit, auditeur, zone, equipe, semaine, annee, date_audit, score_pourcentage, nb_ok, nb_nok, total_questions, details_json, appareil)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                  (idp, type_audit, auditeur, zone, equipe, semaine, annee, date_str, score, nb_ok, nb_nok, total_q, details_str, appareil))
         conn.commit()
     conn.close()
 
@@ -433,7 +439,7 @@ if page == "📊 Historique des Audits":
         st.markdown("---")
         
         # Bouton d'export Excel placé juste avant le tableau
-        excel_data = convert_df_to_excel(filtered_df[['idp', 'type_audit', 'auditeur', 'zone', 'equipe', 'semaine', 'annee', 'date_audit', 'score_pourcentage', 'nb_ok', 'nb_nok', 'total_questions']])
+        excel_data = convert_df_to_excel(filtered_df[['idp', 'type_audit', 'auditeur', 'zone', 'equipe', 'semaine', 'annee', 'date_audit', 'score_pourcentage', 'nb_ok', 'nb_nok', 'total_questions', 'appareil']])
         st.download_button(
             label="📥 Exporter l'historique vers Excel",
             data=excel_data,
@@ -445,7 +451,7 @@ if page == "📊 Historique des Audits":
         st.subheader("📋 Tableau de l'historique (Sélectionnez une ligne pour gérer le rapport)")
 
         event = st.dataframe(
-            filtered_df[['id', 'idp', 'type_audit', 'auditeur', 'zone', 'equipe', 'semaine', 'annee', 'date_audit', 'score_pourcentage', 'nb_ok', 'nb_nok']],
+            filtered_df[['id', 'idp', 'type_audit', 'auditeur', 'zone', 'equipe', 'semaine', 'annee', 'date_audit', 'score_pourcentage', 'nb_ok', 'nb_nok', 'appareil']],
             use_container_width=True,
             selection_mode="single-row",
             on_select="rerun",
@@ -693,7 +699,11 @@ else:
         annee = st.session_state.get(f"{prefix_key}_annee", 2026)
         idp = st.session_state.get(idp_key, "N/A")
 
-        save_audit_in_history(idp, type_code, auditeur, zone, equipe, semaine, annee, taux, nb_ok, nb_nok, total_questions, reponses)
+        # Récupération de l'appareil (User-Agent)
+        headers = getattr(st, "context", None) and getattr(st.context, "headers", None)
+        appareil = headers.get("User-Agent", "Inconnu") if headers else "Inconnu"
+
+        save_audit_in_history(idp, type_code, auditeur, zone, equipe, semaine, annee, taux, nb_ok, nb_nok, total_questions, reponses, appareil)
 
         st.markdown(f"""
             <div class="score-banner">
