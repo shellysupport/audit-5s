@@ -1,147 +1,96 @@
-import io
-import os
-import random
+import streamlit as st
+if st.query_params.get("secret") == "download":
+    st.download_button("Télécharger DB", open("audit_config.db", "rb"), "audit_config.db")
+
 import sqlite3
-import smtplib
+import random
 from datetime import datetime
-from email.mime.multipart import MIMEMultipart
+import smtplib
+import io
+import pandas as pd
 from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from email.mime.application import MIMEApplication
 
-import pandas as pd
-import streamlit as st
-
+# --- REPORTLAB IMPORTS POUR LE PDF ---
 from reportlab.lib.pagesizes import letter
 from reportlab.lib import colors
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch
 
-# ==============================================================================
-# CONFIGURATION DE LA PAGE STREAMLIT
-# ==============================================================================
+# --- CONFIGURATION DE LA PAGE ---
 st.set_page_config(
-    page_title="Gestion des Audits 5S & Auto Maintenance",
+    page_title="Audits d'Atelier",
     page_icon="📋",
     layout="wide"
 )
 
-DB_NAME = "audits_database.db"
-
-# ==============================================================================
-# PARTIE 1 : BACK-END & BASE DE DONNÉES (SQLITE) & UTILITAIRES
-# ==============================================================================
-
+# --- BASE DE DONNÉES (PERSISTANCE DES PARAMÈTRES & HISTORIQUE) ---
 def get_db_connection():
-    """Crée et retourne une connexion à la base de données SQLite."""
-    conn = sqlite3.connect(DB_NAME)
+    conn = sqlite3.connect('audit_config.db')
     conn.row_factory = sqlite3.Row
     return conn
 
 def init_db():
-    """Initialise les tables de la base de données et insère les paramètres par défaut."""
     conn = get_db_connection()
     c = conn.cursor()
-
+    c.execute('''CREATE TABLE IF NOT EXISTS auditeurs (id INTEGER PRIMARY KEY AUTOINCREMENT, nom TEXT UNIQUE NOT NULL)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS zones (id INTEGER PRIMARY KEY AUTOINCREMENT, nom TEXT UNIQUE NOT NULL)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS equipements (id INTEGER PRIMARY KEY AUTOINCREMENT, nom TEXT UNIQUE NOT NULL)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS emails (id INTEGER PRIMARY KEY AUTOINCREMENT, label TEXT NOT NULL, email TEXT UNIQUE NOT NULL)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT NOT NULL)''')
+    
     # Table Historique des Audits
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS historique_audits (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            idp TEXT,
-            type_audit TEXT,
-            auditeur TEXT,
-            zone TEXT,
-            equipe TEXT,
-            semaine INTEGER,
-            annee INTEGER,
-            date_audit TEXT,
-            score_pourcentage REAL,
-            nb_ok INTEGER,
-            nb_nok INTEGER,
-            total_questions INTEGER
-        )
-    """)
+    c.execute('''CREATE TABLE IF NOT EXISTS historique_audits (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        idp TEXT,
+        type_audit TEXT NOT NULL,
+        auditeur TEXT NOT NULL,
+        zone TEXT NOT NULL,
+        equipe TEXT,
+        semaine INTEGER,
+        annee INTEGER,
+        date_audit TEXT,
+        score_pourcentage REAL,
+        nb_ok INTEGER,
+        nb_nok INTEGER,
+        total_questions INTEGER
+    )''')
 
-    # Table Questions / Checklists
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS questions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            type_audit TEXT,
-            categorie TEXT,
-            intitule TEXT
-        )
-    """)
-
-    # Table Auditeurs
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS auditeurs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            nom TEXT
-        )
-    """)
-
-    # Table Zones / Îlots (5S)
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS zones (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            nom TEXT
-        )
-    """)
-
-    # Table Équipements / Machines (AM)
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS equipements (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            nom TEXT
-        )
-    """)
-
-    # Table Emails Destinataires
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS emails (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            label TEXT,
-            email TEXT
-        )
-    """)
-
-    # Table Configuration (Mot de passe Admin, SMTP, etc.)
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS config (
-            cle TEXT PRIMARY KEY,
-            valeur TEXT
-        )
-    """)
-
-    conn.commit()
-
-    # Initialisation des paramètres par défaut s'ils n'existent pas
-    c.execute("SELECT COUNT(*) FROM config WHERE cle = 'admin_password'")
-    if c.fetchone()[0] == 0:
-        c.execute("INSERT INTO config (cle, valeur) VALUES ('admin_password', 'admin123')")
-        c.execute("INSERT INTO config (cle, valeur) VALUES ('smtp_server', 'smtp.gmail.com')")
-        c.execute("INSERT INTO config (cle, valeur) VALUES ('smtp_port', '587')")
-        c.execute("INSERT INTO config (cle, valeur) VALUES ('smtp_user', '')")
-        c.execute("INSERT INTO config (cle, valeur) VALUES ('smtp_password', '')")
-        conn.commit()
-
-    # Seeding initial des données si les tables sont vides
+    c.execute('''CREATE TABLE IF NOT EXISTS questions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, 
+        type_audit TEXT NOT NULL, 
+        categorie TEXT NOT NULL, 
+        intitule TEXT NOT NULL,
+        ordre INTEGER DEFAULT 0
+    )''')
+    
     c.execute("SELECT COUNT(*) FROM auditeurs")
     if c.fetchone()[0] == 0:
-        auditeurs_defaut = ["Jean Dupont", "Marie Curie", "Pierre Martin", "Sophie Bernard"]
-        for a in auditeurs_defaut:
-            c.execute("INSERT INTO auditeurs (nom) VALUES (?)", (a,))
-
+        c.executemany("INSERT INTO auditeurs (nom) VALUES (?)", [("BESSEM FEKIH",), ("Jean Dupont",)])
+        
     c.execute("SELECT COUNT(*) FROM zones")
     if c.fetchone()[0] == 0:
-        zones_defaut = ["Zone Assemblage A", "Zone Conditionnement", "Atelier Usinage", "Magasin Stock"]
-        for z in zones_defaut:
-            c.execute("INSERT INTO zones (nom) VALUES (?)", (z,))
+        c.executemany("INSERT INTO zones (nom) VALUES (?)", [("AUTOMATISME",), ("LIGNE 1",), ("MAINTENANCE",)])
 
     c.execute("SELECT COUNT(*) FROM equipements")
     if c.fetchone()[0] == 0:
-        eq_defaut = ["Presse Hydraulique P01", "Ligne de Robotique R02", "Convoyeur Principal C03", "Machine CNC M04"]
-        for eq in eq_defaut:
-            c.execute("INSERT INTO equipements (nom) VALUES (?)", (eq,))
+        c.executemany("INSERT INTO equipements (nom) VALUES (?)", [("Presse 01",), ("Ligne Assemblage A",), ("Robot de Soudure 02",)])
+
+    c.execute("SELECT COUNT(*) FROM emails")
+    if c.fetchone()[0] == 0:
+        c.executemany("INSERT INTO emails (label, email) VALUES (?, ?)", [("Responsable Atelier", "yosri.fadhly@somfy.com"),])
+
+    default_config = {
+        "admin_password": "admin",
+        "smtp_server": "smtp.gmail.com",
+        "smtp_port": "587",
+        "smtp_user": "yosri.fadhly@gmail.com",
+        "smtp_password": "rzftdozwqntssiwa"
+    }
+    for k, v in default_config.items():
+        c.execute("INSERT OR IGNORE INTO config (key, value) VALUES (?, ?)", (k, v))
 
     c.execute("SELECT COUNT(*) FROM questions")
     if c.fetchone()[0] == 0:
@@ -151,280 +100,236 @@ def init_db():
     conn.close()
 
 def seed_default_questions(cursor):
-    """Popule la base de données avec la checklist 5S et Auto Maintenance standard."""
-    qs_5s = [
-        ("S1 – DÉBARRASSER", "Absence d'outils, pièces ou objets inutiles dans la zone."),
-        ("S1 – DÉBARRASSER", "Seul le matériel strictement nécessaire au poste est présent."),
-        ("S2 – RANGER", "Chaque outil a une place définie et identifiée (marquage/ombre)."),
-        ("S2 – RANGER", "Les voies de circulation et passages sont dégagés et matérialisés."),
-        ("S3 – TENIR PROPRE", "Le sol, les tables de travail et les machines sont propres."),
-        ("S3 – TENIR PROPRE", "Les poubelles et bacs de recyclage sont vidés régulièrement."),
-        ("S4 – STANDARDISER", "Les règles de rangement et consignes visuelles sont affichées et lisibles."),
-        ("S5 – MAINTENIR", "L'audit précédent a donné lieu à des actions correctives réalisées.")
+    q_5s = [
+        ("S1 – DÉBARRASSER", "Est-ce qu'il y a du matériel / fournitures / machines / équipement Inutiles ?"),
+        ("S1 – DÉBARRASSER", "Est-ce qu'il y a du matériel / fourniture / machines / équipement Endommagé ?"),
+        ("S2 – RANGER", "Est-ce que chaque matériel a un emplacement défini ?"),
+        ("S2 – RANGER", "Est-ce que chaque matériel est à son emplacement (zoning + affectation) ?"),
+        ("S2 – RANGER", "Est-ce que rien ne traîne en dehors des emplacements ?"),
+        ("S3 – TENIR PROPRE", "Est-ce que le poste et ses abords sont propres ?"),
+        ("S3 – TENIR PROPRE", "Est-ce qu'il n'y a pas des fuites et/ou de salissures ?"),
+        ("S4 – STANDARDISER", "Est-ce que le standard 5S est disponible ?"),
+        ("S4 – STANDARDISER", "Est-ce que le point propreté standard est mis en place ?"),
+        ("S5 – MAINTENIR", "Est-ce que la fiche d'audit quotidien est renseignée et les actions traitées ?"),
+        ("S5 – MAINTENIR", "Quelles sont les dernières actions réalisées par le GAP ?")
     ]
-    for cat, q in qs_5s:
-        cursor.execute("INSERT INTO questions (type_audit, categorie, intitule) VALUES ('5S', ?, ?)", (cat, q))
+    for cat, q in q_5s:
+        cursor.execute("INSERT INTO questions (type_audit, categorie, intitule) VALUES (?, ?, ?)", ("5S", cat, q))
 
-    qs_am = [
-        ("État du poste de travail", "L'équipement est exempt de fuites d'huile, d'eau ou d'air."),
-        ("Kit AM et EPI", "Les équipements de protection individuelle (EPI) sont disponibles et portés."),
-        ("Standard d'AM", "Les points de graissage et niveaux de fluide sont conformes aux repères."),
-        ("Réalisation des Tâches", "Les opérations de nettoyage et d'inspection de premier niveau sont effectuées."),
-        ("Traçabilité et Enregistrement", "La fiche de suivi de maintenance autonome est renseignée à jour.")
+    q_am = [
+        ("État du poste de travail", "Le management visuel est présent et en place."),
+        ("État du poste de travail", "Le poste est propre et organisé conformément aux standards."),
+        ("État du poste de travail", "Aucun élément dangereux ou non conforme (fuite, câble dénudé, pièce au sol...)."),
+        ("Kit AM et EPI", "Le kit AM est complet, conforme à la liste standardisée et identifié (numéro de ligne/poste)."),
+        ("Kit AM et EPI", "Les EPI nécessaires sont disponibles, conformes et en bon état."),
+        ("Kit AM et EPI", "Le kit est facilement accessible et ne gêne pas le flux de production."),
+        ("Standard d'AM", "Un unique standard AM est affiché et accessible à proximité du poste."),
+        ("Standard d'AM", "Les instructions correspondent bien à l'état actuel du poste (FI à jour)."),
+        ("Réalisation des Tâches", "Les opérateurs réalisent les tâches selon le standard et dans l'ordre défini."),
+        ("Réalisation des Tâches", "La fréquence de réalisation (quotidienne / hebdo / mensuelle) est respectée."),
+        ("Réalisation des Tâches", "Les outils et EPI utilisés sont adaptés à chaque action d'AM et sont bien ceux prévus dans le standard."),
+        ("Réalisation des Tâches", "Les opérateurs signalent les écarts observés (défauts, bruit, jeu, fuite...)."),
+        ("Traçabilité et Enregistrement", "Les anomalies détectées sont enregistrées dans le QRCI."),
+        ("Traçabilité et Enregistrement", "Les bons de travail sont émis lorsque nécessaire et transmis à la maintenance."),
+        ("Traçabilité et Enregistrement", "Le tableau de bord AM (SIM, taux de complétion, anomalies...) est mis à jour regularly en mode projet."),
+        ("Traçabilité et Enregistrement", "Les actions issues des audits AM précédents sont suivies en SIM PROD et clôturées.")
     ]
-    for cat, q in qs_am:
-        cursor.execute("INSERT INTO questions (type_audit, categorie, intitule) VALUES ('AM', ?, ?)", (cat, q))
+    for cat, q in q_am:
+        cursor.execute("INSERT INTO questions (type_audit, categorie, intitule) VALUES (?, ?, ?)", ("AM", cat, q))
 
-def get_config_val(cle):
-    """Récupère une valeur de configuration depuis la BD."""
+init_db()
+
+def get_config_val(key):
     conn = get_db_connection()
-    row = conn.execute("SELECT valeur FROM config WHERE cle = ?", (cle,)).fetchone()
+    res = conn.execute("SELECT value FROM config WHERE key = ?", (key,)).fetchone()
     conn.close()
-    return row['valeur'] if row else ""
+    return res['value'] if res else ""
 
-def set_config_val(cle, valeur):
-    """Met à jour une valeur de configuration dans la BD."""
+def set_config_val(key, value):
     conn = get_db_connection()
-    conn.execute("INSERT OR REPLACE INTO config (cle, valeur) VALUES (?, ?)", (cle, valeur))
+    conn.execute("INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)", (key, value))
     conn.commit()
     conn.close()
 
-def get_items(table_name):
-    """Récupère la liste complète des enregistrements d'une table."""
+def get_items(table):
     conn = get_db_connection()
-    items = conn.execute(f"SELECT * FROM {table_name} ORDER BY id ASC").fetchall()
+    items = conn.execute(f"SELECT * FROM {table}").fetchall()
     conn.close()
     return items
 
-def add_item(table_name, columns, values):
-    """Ajoute un enregistrement dans une table."""
+def add_item(table, columns, values):
     conn = get_db_connection()
     placeholders = ", ".join(["?"] * len(values))
-    cols_str = ", ".join(columns)
-    conn.execute(f"INSERT INTO {table_name} ({cols_str}) VALUES ({placeholders})", values)
+    cols = ", ".join(columns)
+    try:
+        conn.execute(f"INSERT INTO {table} ({cols}) VALUES ({placeholders})", values)
+        conn.commit()
+        st.toast("✅ Ajouté avec succès !")
+    except sqlite3.IntegrityError:
+        st.error("⚠️ Cet élément existe déjà.")
+    finally:
+        conn.close()
+
+def delete_item(table, item_id):
+    conn = get_db_connection()
+    conn.execute(f"DELETE FROM {table} WHERE id = ?", (item_id,))
     conn.commit()
     conn.close()
 
-def delete_item(table_name, item_id):
-    """Supprime un enregistrement d'une table par son ID."""
+def save_audit_in_history(idp, type_audit, auditeur, zone, equipe, semaine, annee, score, nb_ok, nb_nok, total_q):
     conn = get_db_connection()
-    conn.execute(f"DELETE FROM {table_name} WHERE id = ?", (item_id,))
-    conn.commit()
+    c = conn.cursor()
+    c.execute("SELECT id FROM historique_audits WHERE idp = ?", (idp,))
+    if c.fetchone() is None:
+        date_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+        c.execute('''INSERT INTO historique_audits 
+                    (idp, type_audit, auditeur, zone, equipe, semaine, annee, date_audit, score_pourcentage, nb_ok, nb_nok, total_questions)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                  (idp, type_audit, auditeur, zone, equipe, semaine, annee, date_str, score, nb_ok, nb_nok, total_q))
+        conn.commit()
     conn.close()
 
 def get_questions_dict(type_audit):
-    """Retourne un dictionnaire {categorie: [liste de questions]} pour le type d'audit donné."""
     conn = get_db_connection()
     rows = conn.execute("SELECT categorie, intitule FROM questions WHERE type_audit = ? ORDER BY id ASC", (type_audit,)).fetchall()
     conn.close()
     
     questions_dict = {}
     for r in rows:
-        cat, q = r['categorie'], r['intitule']
+        cat = r['categorie']
         if cat not in questions_dict:
             questions_dict[cat] = []
-        questions_dict[cat].append(q)
+        questions_dict[cat].append(r['intitule'])
     return questions_dict
 
-def save_audit_in_history(idp, type_audit, auditeur, zone, equipe, semaine, annee, score, ok, nok, total):
-    """Enregistre le résultat global d'un audit dans l'historique."""
-    conn = get_db_connection()
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    conn.execute("""
-        INSERT INTO historique_audits (idp, type_audit, auditeur, zone, equipe, semaine, annee, date_audit, score_pourcentage, nb_ok, nb_nok, total_questions)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (idp, type_audit, auditeur, zone, equipe, semaine, annee, now_str, score, ok, nok, total))
-    conn.commit()
-    conn.close()
-
-def convert_df_to_excel(df):
-    """Convertit un DataFrame Pandas en binaire Excel (.xlsx)."""
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df.to_excel(writer, index=False, sheet_name='Historique Audits')
-    return output.getvalue()
-
-# --- FERTILISATION & GÉNÉRATION DU PDF RAPPORT ---
-def generate_pdf_report(audit_title, idp, auditeur, zone, equipe, semaine, annee, reponses, questions_dict, taux, nb_ok, nb_nok, total_questions):
-    """Génère un rapport PDF stylisé et retourne le buffer binaire."""
+# --- FONCTION DE GÉNÉRATION DU PDF ---
+def generate_pdf_report(audit_title, idp, auditeur, zone, equipe, semaine, annee, reponses, questions_dict, taux, nb_ok, nb_nok, total_q):
     buffer = io.BytesIO()
-    doc = SimpleDocTemplate(
-        buffer,
-        pagesize=letter,
-        rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36
-    )
+    doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36)
+    story = []
     
     styles = getSampleStyleSheet()
-    title_style = ParagraphStyle(
-        'DocTitle',
-        parent=styles['Heading1'],
-        fontSize=20,
-        textColor=colors.HexColor('#0f172a'),
-        spaceAfter=12,
-        alignment=0
-    )
-    meta_style = ParagraphStyle(
-        'MetaText',
-        parent=styles['Normal'],
-        fontSize=10,
-        textColor=colors.HexColor('#334155'),
-        leading=14
-    )
-    cat_style = ParagraphStyle(
-        'CategoryTitle',
-        parent=styles['Heading2'],
-        fontSize=12,
-        textColor=colors.HexColor('#ffffff'),
-        spaceBefore=0,
-        spaceAfter=0
-    )
-    cell_style = ParagraphStyle(
-        'CellText',
-        parent=styles['Normal'],
-        fontSize=9,
-        leading=12
-    )
-
-    story = []
-
-    # En-tête du document
-    story.append(Paragraph(f"<b>RAPPORT D'AUDIT : {audit_title.upper()}</b>", title_style))
-    story.append(Spacer(1, 10))
-
-    # Tableau Métadonnées
-    meta_data = [
-        [
-            Paragraph(f"<b>IDP :</b> {idp}", meta_style),
-            Paragraph(f"<b>Auditeur :</b> {auditeur}", meta_style)
-        ],
-        [
-            Paragraph(f"<b>Zone / Équipement :</b> {zone}", meta_style),
-            Paragraph(f"<b>Équipe :</b> {equipe}", meta_style)
-        ],
-        [
-            Paragraph(f"<b>Période :</b> Semaine {semaine} / {annee}", meta_style),
-            Paragraph(f"<b>Date :</b> {datetime.now().strftime('%d/%m/%Y %H:%M')}", meta_style)
-        ]
+    title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontSize=18, leading=22, textColor=colors.HexColor('#0f172a'), alignment=1)
+    header_s_style = ParagraphStyle('HeaderSStyle', parent=styles['Heading3'], fontSize=11, leading=14, textColor=colors.HexColor('#ffffff'), backColor=colors.HexColor('#0f172a'), spaceBefore=8, spaceAfter=4, borderPadding=4)
+    text_bold = ParagraphStyle('TextBold', parent=styles['Normal'], fontSize=9, leading=12, fontName='Helvetica-Bold')
+    text_normal = ParagraphStyle('TextNormal', parent=styles['Normal'], fontSize=9, leading=12)
+    text_comment = ParagraphStyle('TextComment', parent=styles['Italic'], fontSize=8, leading=10, textColor=colors.HexColor('#475569'))
+    
+    story.append(Paragraph(f"RAPPORT D'AUDIT - {audit_title.upper()}", title_style))
+    story.append(Spacer(1, 6))
+    
+    label_emplacement = "<b>ÉQUIPEMENT :</b>" if "Auto" in audit_title or "AM" in audit_title else "<b>ZONE / ÎLOT :</b>"
+    
+    info_data = [
+        [Paragraph("<b>IDP :</b>", text_normal), Paragraph(str(idp), text_normal), Paragraph("<b>PÉRIODE :</b>", text_normal), Paragraph(f"Semaine {semaine} / {annee}", text_normal)],
+        [Paragraph("<b>AUDITEUR :</b>", text_normal), Paragraph(str(auditeur), text_normal), Paragraph("<b>TAUX CONFORMITÉ :</b>", text_normal), Paragraph(f"<b>{taux}%</b> ({nb_ok} OK / {nb_nok} NOK)", text_normal)],
+        [Paragraph(label_emplacement, text_normal), Paragraph(str(zone), text_normal), Paragraph("<b>ÉQUIPE :</b>", text_normal), Paragraph(str(equipe), text_normal)],
     ]
-    t_meta = Table(meta_data, colWidths=[270, 270])
-    t_meta.setStyle(TableStyle([
+    
+    t_info = Table(info_data, colWidths=[1.3*inch, 2.1*inch, 1.4*inch, 2.2*inch])
+    t_info.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#f8fafc')),
         ('BOX', (0, 0), (-1, -1), 1, colors.HexColor('#cbd5e1')),
         ('INNERGRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#e2e8f0')),
-        ('PADDING', (0, 0), (-1, -1), 8),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('TOPPADDING', (0,0), (-1,-1), 5),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 5),
     ]))
-    story.append(t_meta)
-    story.append(Spacer(1, 15))
-
-    # Banner de Résultat / Score
-    score_color = colors.HexColor('#16a34a') if taux >= 80 else colors.HexColor('#dc2626')
-    score_data = [[
-        Paragraph(f"<font color='white'><b>TAUX DE CONFORMITÉ : {taux}%</b> ({nb_ok} OK / {nb_nok} NOK - Total : {total_questions})</font>", ParagraphStyle('Score', parent=styles['Heading2'], alignment=1))
-    ]]
-    t_score = Table(score_data, colWidths=[540])
-    t_score.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, -1), score_color),
-        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-        ('PADDING', (0, 0), (-1, -1), 10),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 10),
-    ]))
-    story.append(t_score)
-    story.append(Spacer(1, 15))
-
-    # Tableau détaillé du questionnaire
+    story.append(t_info)
+    story.append(Spacer(1, 10))
+    
     q_counter = 0
-    for cat, questions in questions_dict.items():
-        # Ligne d'en-tête de catégorie
-        cat_data = [[Paragraph(f"<b>{cat}</b>", cat_style), ""]]
-        t_cat = Table(cat_data, colWidths=[400, 140])
-        t_cat.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#0f172a')),
-            ('PADDING', (0, 0), (-1, -1), 6),
-            ('SPAN', (0, 0), (1, 0))
-        ]))
-        story.append(t_cat)
-
-        table_rows = [["#", "Critère / Question", "Statut", "Commentaire / Photo"]]
+    for category, questions in questions_dict.items():
+        story.append(Paragraph(f"<b>{category}</b>", header_s_style))
+        
+        table_q_data = []
         for q in questions:
             q_counter += 1
-            rep = reponses.get(q_counter, {"statut": "Non évalué", "comment": "", "photo": None})
+            rep = reponses.get(q_counter, {})
+            statut_txt = rep.get("statut", "Non répondu")
+            comment_txt = rep.get("comment", "")
+            photo_file = rep.get("photo", None)
             
-            statut_str = rep["statut"] or "Non évalué"
-            statut_color = "green" if statut_str.startswith("✓") else ("red" if statut_str.startswith("✕") else "black")
+            if statut_txt and statut_txt.startswith("✓"):
+                status_p = Paragraph("<font color='#16a34a'><b>✓ OK / CONFORME</b></font>", text_normal)
+            else:
+                status_p = Paragraph("<font color='#dc2626'><b>✕ NOK / NON CONFORME</b></font>", text_normal)
             
-            statut_p = Paragraph(f"<font color='{statut_color}'><b>{statut_str}</b></font>", cell_style)
-            q_p = Paragraph(q, cell_style)
-            c_p = Paragraph(rep["comment"] if rep["comment"] else "-", cell_style)
-
-            # Inclusion de la photo si présente
-            img_element = Paragraph("-", cell_style)
-            if rep["photo"] is not None:
+            q_content = [Paragraph(q, text_bold)]
+            if comment_txt:
+                q_content.append(Paragraph(f"<i>Observation : {comment_txt}</i>", text_comment))
+                
+            img_element = ""
+            if photo_file is not None:
                 try:
-                    img_data = rep["photo"].read()
-                    rep["photo"].seek(0)
-                    img_io = io.BytesIO(img_data)
-                    img_element = RLImage(img_io, width=60, height=45)
+                    photo_file.seek(0)
+                    img_data = io.BytesIO(photo_file.read())
+                    photo_file.seek(0)
+                    img_element = RLImage(img_data, width=1.2*inch, height=0.9*inch)
                 except Exception:
-                    img_element = Paragraph("[Photo Erreur]", cell_style)
-
-            comment_cell = [c_p]
-            if rep["photo"] is not None:
-                comment_cell.append(Spacer(1, 4))
-                comment_cell.append(img_element)
-
-            table_rows.append([str(q_counter), q_p, statut_p, comment_cell])
-
-        t_q = Table(table_rows, colWidths=[25, 235, 110, 170])
+                    img_element = Paragraph("<i>Image non disponible</i>", text_comment)
+            
+            table_q_data.append([q_content, status_p, img_element])
+            
+        t_q = Table(table_q_data, colWidths=[4.2*inch, 1.4*inch, 1.4*inch])
         t_q.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#f1f5f9')),
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.HexColor('#0f172a')),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#cbd5e1')),
-            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-            ('PADDING', (0, 0), (-1, -1), 5),
+            ('BOX', (0, 0), (-1, -1), 0.5, colors.HexColor('#cbd5e1')),
+            ('INNERGRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#f1f5f9')),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('TOPPADDING', (0,0), (-1,-1), 4),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 4),
         ]))
         story.append(t_q)
-        story.append(Spacer(1, 10))
+        story.append(Spacer(1, 6))
 
     doc.build(story)
     buffer.seek(0)
     return buffer.getvalue()
 
-# --- ENVOI D'EMAIL AVEC PIÈCE JOINTE ---
-def send_email_with_pdf(pdf_bytes, audit_title, idp, auditeur, zone, equipe, semaine, annee, taux, nb_ok, nb_nok, total_questions, recipients):
-    """Envoie le rapport PDF généré par email via le serveur SMTP configuré."""
+# --- FONCTION DE GÉNÉRATION DE L'EXCEL ---
+def convert_df_to_excel(df):
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='Historique Audits')
+    output.seek(0)
+    return output.getvalue()
+
+# --- ENVOI DE EMAIL DE RAPPORT ---
+def send_email_with_pdf(pdf_bytes, audit_title, idp, auditeur, zone, equipe, semaine, annee, taux, nb_ok, nb_nok, total_q, recipients):
     smtp_server = get_config_val("smtp_server")
     smtp_port = get_config_val("smtp_port")
     smtp_user = get_config_val("smtp_user")
     smtp_password = get_config_val("smtp_password")
 
     if not smtp_server or not smtp_user or not smtp_password:
-        return False, "⚠️ Configuration SMTP incomplète dans les Paramètres Admin."
+        return False, "Configuration SMTP incomplète dans les paramètres."
+
+    lbl_loc = "Équipement / Machine" if "AM" in audit_title or "Auto" in audit_title else "Zone / Îlot"
 
     msg = MIMEMultipart()
     msg['From'] = smtp_user
     msg['To'] = ", ".join(recipients)
-    msg['Subject'] = f"[{audit_title}] {zone} - Semaine {semaine}/{annee} (Résultat : {taux}%)"
+    msg['Subject'] = f"[{audit_title.upper()}] Rapport d'Audit - {zone} (S{semaine}/{annee}) - Conformité : {taux}%"
 
     body = f"""Bonjour,
 
-Veuillez trouver ci-joint le rapport détaillé pour l'audit suivant :
+Veuillez trouver ci-joint le rapport PDF concernant l'audit ci-dessous :
 
-• Type d'audit : {audit_title}
-• Identifiant (IDP) : {idp}
+• Audit : {audit_title}
+• IDP : {idp}
 • Auditeur : {auditeur}
-• Zone / Équipement : {zone}
+• {lbl_loc} : {zone}
 • Équipe : {equipe}
 • Période : Semaine {semaine} / {annee}
-• Score de conformité : {taux}% ({nb_ok} OK / {nb_nok} NOK sur {total_questions} questions)
+• Taux de Conformité : {taux}% ({nb_ok} OK / {nb_nok} NOK sur {total_q} questions)
 
 Cordialement,
-Système de Gestion des Audits
+Système d'Audit d'Atelier
 """
     msg.attach(MIMEText(body, 'plain'))
 
     attachment = MIMEApplication(pdf_bytes, _subtype="pdf")
-    attachment.add_header('Content-Disposition', 'attachment', filename=f"Rapport_Audit_{type_code_filename(audit_title)}_{zone}_S{semaine}.pdf")
+    attachment.add_header('Content-Disposition', 'attachment', filename=f"Rapport_{audit_title}_{zone}_S{semaine}.pdf")
     msg.attach(attachment)
 
     try:
@@ -433,22 +338,11 @@ Système de Gestion des Audits
         server.login(smtp_user, smtp_password)
         server.sendmail(smtp_user, recipients, msg.as_string())
         server.quit()
-        return True, "✅ Email envoyé avec succès aux destinataires !"
+        return True, "E-mail envoyé avec succès !"
     except Exception as e:
-        return False, f"❌ Erreur lors de l'envoi de l'e-mail : {str(e)}"
+        return False, f"Erreur lors de l'envoi de l'e-mail : {str(e)}"
 
-def type_code_filename(title):
-    return "5S" if "5S" in title else "AM"
-
-# Initialisation systématique de la BD au démarrage
-init_db()
-
-
-# ==============================================================================
-# PARTIE 2 : INTERFACE UTILISATEUR & NAVIGATION STREAMLIT
-# ==============================================================================
-
-# --- CSS PERSONNALISÉ ---
+# --- STYLES CSS PERSONNALISÉS ---
 st.markdown("""
     <style>
     .stApp { background-color: #f8fafc; }
@@ -461,12 +355,11 @@ st.markdown("""
     .info-card { background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.02); }
     .info-label { font-size: 11px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; }
     .info-val { font-size: 15px; font-weight: 800; color: #0f172a; margin-top: 2px; }
-    
+    .info-val-nok { font-size: 15px; font-weight: 800; color: #dc2626; margin-top: 2px; }
     .score-banner { background-color: #0f172a; color: white; border-radius: 12px; padding: 24px; text-align: center; margin: 20px 0; }
     .score-percent { font-size: 56px; font-weight: 900; line-height: 1; margin-bottom: 6px; }
     .score-subtitle { font-size: 12px; font-weight: 800; letter-spacing: 1px; color: #94a3b8; text-transform: uppercase; }
     .score-detail { font-size: 14px; font-weight: 600; margin-top: 8px; color: #cbd5e1; }
-    
     div.stButton > button { border-radius: 8px; font-weight: 700; }
 
     div[data-testid="stRadio"] > div[role="radiogroup"] {
@@ -491,11 +384,27 @@ st.markdown("""
         border-color: #16a34a !important;
         color: #15803d !important;
     }
+    div[data-testid="stRadio"] label:nth-of-type(1):has(input:checked) div[role="radio"] {
+        background-color: #16a34a !important;
+        border-color: #16a34a !important;
+        box-shadow: inset 0 0 0 3px #ffffff !important;
+    }
 
     div[data-testid="stRadio"] label:nth-of-type(2):has(input:checked) {
         background-color: #fef2f2 !important;
         border-color: #dc2626 !important;
         color: #b91c1c !important;
+    }
+    div[data-testid="stRadio"] label:nth-of-type(2):has(input:checked) div[role="radio"] {
+        background-color: #dc2626 !important;
+        border-color: #dc2626 !important;
+        box-shadow: inset 0 0 0 3px #ffffff !important;
+    }
+
+    section[data-testid="stSidebar"] div[data-testid="stRadio"] label {
+        border-color: #e2e8f0 !important;
+        background-color: #ffffff !important;
+        color: #0f172a !important;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -604,16 +513,16 @@ elif page == "⚙️ Paramètres / Admin":
             "🔐 Sécurité & SMTP"
         ])
 
-        # --- TAB 1 : ÉDITION ET SUPPRESSION DE L'HISTORIQUE ---
+        # --- ONGLET 1 : ÉDITION ET SUPPRESSION DES AUDITS HISTORIQUES ---
         with tab1:
             st.subheader("🛠️ Gérer / Modifier l'Historique des Audits")
             
             conn = get_db_connection()
             df_audits = pd.read_sql_query("SELECT * FROM historique_audits ORDER BY id DESC", conn)
-            conn.close()
             
             if df_audits.empty:
                 st.info("Aucun audit à modifier ou supprimer.")
+                conn.close()
             else:
                 subtab_edit, subtab_del = st.tabs(["✏️ Modifier un Audit", "🗑️ Supprimer un Audit"])
                 
@@ -646,15 +555,14 @@ elif page == "⚙️ Paramètres / Admin":
                         st.info(f"📊 **Nouveau Total :** {new_total} questions  |  🎯 **Nouveau Taux :** {new_score}%")
 
                         if st.form_submit_button("💾 Enregistrer les modifications", use_container_width=True):
-                            conn_update = get_db_connection()
-                            c_db = conn_update.cursor()
+                            c_db = conn.cursor()
                             c_db.execute("""
                                 UPDATE historique_audits 
                                 SET type_audit = ?, auditeur = ?, zone = ?, equipe = ?, semaine = ?, annee = ?, nb_ok = ?, nb_nok = ?, total_questions = ?, score_pourcentage = ?
                                 WHERE id = ?
                             """, (e_type, e_auditeur, e_zone, e_equipe, e_semaine, e_annee, e_ok, e_nok, new_total, new_score, selected_id))
-                            conn_update.commit()
-                            conn_update.close()
+                            conn.commit()
+                            conn.close()
                             st.success(f"✅ Audit #{selected_id} mis à jour avec succès !")
                             st.rerun()
 
@@ -663,15 +571,15 @@ elif page == "⚙️ Paramètres / Admin":
                     st.warning("⚠️ Attention, la suppression est definitiva.")
                     
                     if st.button("❌ Supprimer définitivement l'audit", type="primary"):
-                        conn_del = get_db_connection()
-                        c_db = conn_del.cursor()
+                        c_db = conn.cursor()
                         c_db.execute("DELETE FROM historique_audits WHERE id = ?", (selected_id_del,))
-                        conn_del.commit()
-                        conn_del.close()
+                        conn.commit()
+                        conn.close()
                         st.success(f"✅ Audit #{selected_id_del} supprimé !")
                         st.rerun()
+                
+                if conn: conn.close()
 
-        # --- TAB 2 : CHECKLISTS & QUESTIONS ---
         with tab2:
             st.subheader("📝 Modifier les Checklists d'Audit")
             selected_audit_type = st.selectbox("Choisir l'audit à modifier :", ["5S", "AM"], format_func=lambda x: "Audit 5S Hebdo" if x == "5S" else "Audit Auto Maintenance (AM)")
@@ -728,7 +636,6 @@ elif page == "⚙️ Paramètres / Admin":
                 st.success("Checklists réinitialisées aux valeurs d'origine !")
                 st.rerun()
 
-        # --- TAB 3 : AUDITEURS ---
         with tab3:
             st.subheader("Liste des Auditeurs")
             for a in get_items("auditeurs"):
@@ -744,7 +651,6 @@ elif page == "⚙️ Paramètres / Admin":
                     add_item("auditeurs", ["nom"], [new_aud.strip()])
                     st.rerun()
 
-        # --- TAB 4 : ZONES ---
         with tab4:
             st.subheader("Liste des Zones / Îlots (Pour Audit 5S)")
             for z in get_items("zones"):
@@ -760,7 +666,6 @@ elif page == "⚙️ Paramètres / Admin":
                     add_item("zones", ["nom"], [new_z.strip()])
                     st.rerun()
 
-        # --- TAB 5 : ÉQUIPEMENTS ---
         with tab5:
             st.subheader("Liste des Équipements / Machines (Pour Audit AM)")
             for eq in get_items("equipements"):
@@ -776,7 +681,6 @@ elif page == "⚙️ Paramètres / Admin":
                     add_item("equipements", ["nom"], [new_eq.strip()])
                     st.rerun()
 
-        # --- TAB 6 : EMAILS ---
         with tab6:
             st.subheader("Adresses E-mails des Destinataires")
             for e in get_items("emails"):
@@ -793,7 +697,6 @@ elif page == "⚙️ Paramètres / Admin":
                     add_item("emails", ["label", "email"], [lbl.strip(), em.strip()])
                     st.rerun()
 
-        # --- TAB 7 : SÉCURITÉ & SMTP ---
         with tab7:
             st.subheader("🔑 Changer le mot de passe d'accès aux Paramètres")
             current_pwd = get_config_val("admin_password")
@@ -933,7 +836,7 @@ else:
         zone = st.session_state.get(f"{prefix_key}_zone", "Non définie")
         equipe = st.session_state.get(f"{prefix_key}_equipe", "Non définie")
         semaine = st.session_state.get(f"{prefix_key}_semaine", 1)
-        annee = st.session_state.get(f"{prefix_key}_annee", datetime.now().year)
+        annee = st.session_state.get(f"{prefix_key}_annee", 2026)
         idp = st.session_state.get(idp_key, "N/A")
 
         # Sauvegarde automatique dans l'historique de la BD
