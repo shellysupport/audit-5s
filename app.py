@@ -123,7 +123,7 @@ def seed_default_questions(cursor):
         ("Réalisation des Tâches", "Les opérateurs signalent les écarts observés (défauts, bruit, jeu, fuite...)."),
         ("Traçabilité et Enregistrement", "Les anomalies détectées sont enregistrées dans le QRCI."),
         ("Traçabilité et Enregistrement", "Les bons de travail sont émis lorsque nécessaire et transmis à la maintenance."),
-        ("Traçabilité et Enregistrement", "Le tableau de bord AM (SIM, taux de complétion, anomalies...) est mis à jour régulièrement en mode projet."),
+        ("Traçabilité et Enregistrement", "Le tableau de bord AM (SIM, taux de complétion, anomalies...) est mis à jour regularly en mode projet."),
         ("Traçabilité et Enregistrement", "Les actions issues des audits AM précédents sont suivies en SIM PROD et clôturées.")
     ]
     for cat, q in q_am:
@@ -171,7 +171,6 @@ def delete_item(table, item_id):
 def save_audit_in_history(idp, type_audit, auditeur, zone, equipe, semaine, annee, score, nb_ok, nb_nok, total_q):
     conn = get_db_connection()
     c = conn.cursor()
-    # Vérifie si l'audit IDP a déjà été enregistré pour éviter les doublons
     c.execute("SELECT id FROM historique_audits WHERE idp = ?", (idp,))
     if c.fetchone() is None:
         date_str = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -241,7 +240,8 @@ def generate_pdf_report(audit_title, idp, auditeur, zone, equipe, semaine, annee
             comment_txt = rep.get("comment", "")
             photo_file = rep.get("photo", None)
             
-            if "Conforme" in statut_txt or statut_txt == "OK":
+            # --- CORRECTION DU TEST DE CONFORMITÉ DANS LE PDF ---
+            if statut_txt.startswith("✓"):
                 status_p = Paragraph("<font color='#16a34a'><b>✓ OK / CONFORME</b></font>", text_normal)
             else:
                 status_p = Paragraph("<font color='#dc2626'><b>✕ NOK / NON CONFORME</b></font>", text_normal)
@@ -410,7 +410,6 @@ if page == "📊 Historique des Audits":
     if df_history.empty:
         st.info("Aucun audit n'a encore été enregistré dans l'historique.")
     else:
-        # Filtres
         col_f1, col_f2 = st.columns(2)
         with col_f1:
             type_filter = st.multiselect("Filtrer par type d'audit :", options=df_history['type_audit'].unique(), default=df_history['type_audit'].unique())
@@ -422,7 +421,6 @@ if page == "📊 Historique des Audits":
             (df_history['zone'].isin(zone_filter))
         ]
 
-        # KPIs
         kpi1, kpi2, kpi3 = st.columns(3)
         kpi1.metric("Nombre total d'audits", len(filtered_df))
         moyenne_score = filtered_df['score_pourcentage'].mean() if not filtered_df.empty else 0
@@ -431,7 +429,6 @@ if page == "📊 Historique des Audits":
 
         st.markdown("---")
 
-        # Renommage des colonnes pour un affichage propre
         df_display = filtered_df.rename(columns={
             'idp': 'IDP',
             'type_audit': 'Type Audit',
@@ -716,7 +713,9 @@ else:
         st.title(f"RAPPORT - {audit_title.upper()}")
 
         reponses = st.session_state[reponses_key]
-        nb_ok = sum(1 for r in reponses.values() if "Conforme" in r["statut"] or "OK" in r["statut"])
+        
+        # --- CORRECTION DU CALCUL DES REPOSES OK / NOK ---
+        nb_ok = sum(1 for r in reponses.values() if r["statut"].startswith("✓"))
         nb_nok = total_questions - nb_ok
         taux = int((nb_ok / total_questions) * 100) if total_questions > 0 else 0
 
