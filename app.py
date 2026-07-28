@@ -60,6 +60,12 @@ def init_db():
         details_json TEXT
     )''')
 
+    # Sécurité : ajoute la colonne details_json si la table existait déjà sans elle
+    try:
+        c.execute("ALTER TABLE historique_audits ADD COLUMN details_json TEXT")
+    except sqlite3.OperationalError:
+        pass
+
     c.execute('''CREATE TABLE IF NOT EXISTS questions (
         id INTEGER PRIMARY KEY AUTOINCREMENT, 
         type_audit TEXT NOT NULL, 
@@ -70,15 +76,15 @@ def init_db():
     
     c.execute("SELECT COUNT(*) FROM auditeurs")
     if c.fetchone()[0] == 0:
-        c.executemany("INSERT INTO auditeurs (nom) VALUES (?)", [("BESSEM FEKIH",), ("Jean Dupont",)])
+        c.executemany("INSERT INTO auditeurs (nom) VALUES (?)", [("BESSEM FEKIH",), ("Yosri Fadhly",)])
         
     c.execute("SELECT COUNT(*) FROM zones")
     if c.fetchone()[0] == 0:
-        c.executemany("INSERT INTO zones (nom) VALUES (?)", [("AUTOMATISME",), ("LIGNE 1",), ("MAINTENANCE",)])
+        c.executemany("INSERT INTO zones (nom) VALUES (?)", [("AUTOMATISME",), ("LIGNE 1",), ("UPS",)])
 
     c.execute("SELECT COUNT(*) FROM equipements")
     if c.fetchone()[0] == 0:
-        c.executemany("INSERT INTO equipements (nom) VALUES (?)", [("Presse 01",), ("Ligne Assemblage A",), ("Robot de Soudure 02",)])
+        c.executemany("INSERT INTO equipements (nom) VALUES (?)", [("FI506",), ("FI507",), ("Robot de Soudure 02",)])
 
     c.execute("SELECT COUNT(*) FROM emails")
     if c.fetchone()[0] == 0:
@@ -185,7 +191,6 @@ def save_audit_in_history(idp, type_audit, auditeur, zone, equipe, semaine, anne
     if c.fetchone() is None:
         date_str = datetime.now().strftime("%Y-%m-%d %H:%M")
         
-        # Sérialisation propre des réponses (sans les objets fichiers images bruts pour éviter l'erreur de sérialisation JSON)
         serializable_reponses = {}
         for k, v in reponses_dict_raw.items():
             serializable_reponses[str(k)] = {
@@ -257,12 +262,11 @@ def generate_pdf_report(audit_title, idp, auditeur, zone, equipe, semaine, annee
         table_q_data = []
         for q in questions:
             q_counter += 1
-            # Gère les deux structures de données (dictionnaire live ou json parsé)
             rep = reponses.get(q_counter, reponses.get(str(q_counter), {}))
             statut_txt = rep.get("statut", "Non répondu")
             comment_txt = rep.get("comment", "")
             
-            if statut_txt and (str(statust_txt).startswith("✓") or "OK" in str(statut_txt)):
+            if statut_txt and (str(statut_txt).startswith("✓") or "OK" in str(statut_txt)):
                 status_p = Paragraph("<font color='#16a34a'><b>✓ OK / CONFORME</b></font>", text_normal)
             else:
                 status_p = Paragraph("<font color='#dc2626'><b>✕ NOK / NON CONFORME</b></font>", text_normal)
@@ -272,7 +276,6 @@ def generate_pdf_report(audit_title, idp, auditeur, zone, equipe, semaine, annee
                 q_content.append(Paragraph(f"<i>Observation : {comment_txt}</i>", text_comment))
                 
             img_element = ""
-            # Si un fichier image est présent dans le dictionnaire live
             if isinstance(rep.get("photo"), io.BytesIO) or hasattr(rep.get("photo"), "read"):
                 try:
                     photo_file = rep.get("photo")
@@ -417,7 +420,6 @@ if page == "📊 Historique des Audits":
         st.markdown("---")
         st.subheader("📥 Téléchargement / Régénération des Rapports PDF par Audit")
 
-        # Affichage interactif pour régénérer le PDF de n'importe quel ancien audit
         for _, row in filtered_df.iterrows():
             audit_label_type = "Audit 5S Hebdo" if row['type_audit'] == "5S" else "Audit Auto Maintenance"
             with st.expander(f"Audit #{row['id']} | IDP : {row['idp']} | [{row['type_audit']}] {row['zone']} - S{row['semaine']}/{row['annee']} ({row['auditeur']} - {row['score_pourcentage']}%)"):
@@ -429,7 +431,6 @@ if page == "📊 Historique des Audits":
                     st.write(f"**Résultat :** {row['nb_ok']} OK / {row['nb_nok']} NOK")
                     st.write(f"**Conformité :** {row['score_pourcentage']}%")
                 with col_btn:
-                    # Bouton de régénération directe du PDF depuis l'historique
                     if row['details_json']:
                         rep_dict = json.loads(row['details_json'])
                         q_dict = get_questions_dict(row['type_audit'])
@@ -447,7 +448,7 @@ if page == "📊 Historique des Audits":
                             key=f"regen_pdf_{row['id']}"
                         )
                     else:
-                        st.warning("Détails non disponibles.")
+                        st.warning("Détails non disponibles pour cet ancien audit.")
 
         st.markdown("---")
         excel_data = convert_df_to_excel(filtered_df[['idp', 'type_audit', 'auditeur', 'zone', 'equipe', 'semaine', 'annee', 'date_audit', 'score_pourcentage', 'nb_ok', 'nb_nok', 'total_questions']])
@@ -657,7 +658,6 @@ else:
         annee = st.session_state.get(f"{prefix_key}_annee", 2026)
         idp = st.session_state.get(idp_key, "N/A")
 
-        # Sauvegarde complète incluant le JSON des réponses pour permettre la régénération ultérieure
         save_audit_in_history(idp, type_code, auditeur, zone, equipe, semaine, annee, taux, nb_ok, nb_nok, total_questions, reponses)
 
         st.markdown(f"""
