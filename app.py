@@ -51,7 +51,6 @@ def init_db():
     c.execute("CREATE TABLE IF NOT EXISTS emails (id INTEGER PRIMARY KEY AUTOINCREMENT, label TEXT, email TEXT)")
     c.execute("CREATE TABLE IF NOT EXISTS config (cle TEXT PRIMARY KEY, valeur TEXT)")
 
-    # Configurations par défaut
     configs_defaut = [
         ("admin_password", "admin123"),
         ("smtp_server", "smtp.gmail.com"),
@@ -62,7 +61,6 @@ def init_db():
     for cle, val in configs_defaut:
         c.execute("INSERT OR IGNORE INTO config (cle, valeur) VALUES (?, ?)", (cle, val))
 
-    # --- DONNÉES PAR DÉFAUT (SI LA BDD EST VIDE) ---
     c.execute("SELECT COUNT(*) FROM questions")
     if c.fetchone()[0] == 0:
         seed_default_questions(c)
@@ -136,7 +134,7 @@ def seed_default_questions(cursor):
         "Traçabilité et Enregistrement": [
             "Les anomalies détectées sont enregistrées dans le QRCI.",
             "Les bons de travail sont émis lorsque nécessaire et transmis à la maintenance.",
-            "Le tableau de bord AM (SIM, taux de complétion, anomalies...) est mis à jour régulièrement en mode projet.",
+            "Le tableau de bord AM (SIM, taux de complétion, anomalies...) est mis à jour regularly en mode projet.",
             "Les actions issues des audits AM précédents sont suivies en SIM PROD et clôturées."
         ]
     }
@@ -432,6 +430,7 @@ elif page == "📊 Historique des Audits":
 
         st.caption("👇 **Cliquez sur une ligne du tableau** pour générer et télécharger le rapport PDF correspondant.")
 
+        # Affichage du tableau interactif avec option de sélection de ligne
         event = st.dataframe(
             df_display[['IDP', 'Type Audit', 'Auditeur', 'Zone / Équipement', 'Équipe', 'Semaine', 'Année', 'Date & Heure', 'Résultat (%)', 'OK', 'NOK']],
             use_container_width=True,
@@ -442,6 +441,7 @@ elif page == "📊 Historique des Audits":
 
         selected_rows = event.selection.rows if event else []
 
+        # BLOC RAJOUTÉ : Régénération du PDF en cas de clic sur une ligne
         if selected_rows:
             row_idx = selected_rows[0]
             selected_row = filtered_df.iloc[row_idx]
