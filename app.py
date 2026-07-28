@@ -230,7 +230,7 @@ def get_questions_dict(type_audit):
         questions_dict[cat].append(r['intitule'])
     return questions_dict
 
-# --- FONCTION DE GÉNÉRATION DU PDF (CORRIGÉE & SÉCURISÉE) ---
+# --- FONCTION DE GÉNÉRATION DU PDF ---
 def generate_pdf_report(audit_title, idp, auditeur, zone, equipe, semaine, annee, reponses, type_code, taux, nb_ok, nb_nok, total_q):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36)
@@ -273,12 +273,10 @@ def generate_pdf_report(audit_title, idp, auditeur, zone, equipe, semaine, annee
         
         table_q_data = []
         for q_id, q_text in questions:
-            # Récupération sécurisée via l'ID exact de la question (int ou str)
             rep = reponses.get(q_id, reponses.get(str(q_id), {}))
             statut_txt = rep.get("statut", "")
             comment_txt = rep.get("comment", "")
             
-            # Analyse stricte du statut pour éviter tout décalage
             if statut_txt and ("✓" in str(statut_txt) or "OK" in str(statut_txt)):
                 status_p = Paragraph("<font color='#16a34a'><b>✓ OK / CONFORME</b></font>", text_normal)
             else:
@@ -658,9 +656,13 @@ else:
 
     elif st.session_state[step_key] == 4:
         reponses = st.session_state[reponses_key]
-        nb_ok = sum(1 for rep in reponses.values() if rep["statut"] and ("✓" in rep["statut"] or "OK" in rep["statut"]))
-        nb_nok = total_questions - nb_ok
-        taux = round((nb_ok / total_questions) * 100, 1) if total_questions > 0 else 0
+        
+        # CORRECTION : Comptage strict basé explicitement sur la présence de "OK" ou "NOK"
+        nb_ok = sum(1 for rep in reponses.values() if rep.get("statut") and "OK" in str(rep.get("statut")))
+        nb_nok = sum(1 for rep in reponses.values() if rep.get("statut") and "NOK" in str(rep.get("statut")))
+        
+        total_effective = nb_ok + nb_nok
+        taux = round((nb_ok / total_effective) * 100, 1) if total_effective > 0 else 0
 
         auditeur = st.session_state.get(f"{prefix_key}_auditeur", "Inconnu")
         zone = st.session_state.get(f"{prefix_key}_zone", "Non définie")
@@ -697,7 +699,7 @@ else:
         with col_email:
             st.subheader("📧 Envoi par e-mail")
             if db_emails:
-                email_list = [e['email'] for e in db_emails]
+                email_list = [e['email']  for e in db_emails]
                 selected_emails = st.multiselect("Destinataires :", options=email_list, default=email_list)
                 if st.button("📤 Envoyer le rapport", use_container_width=True):
                     success, msg = send_email_with_pdf(pdf_bytes, audit_title, idp, auditeur, zone, equipe, semaine, annee, taux, nb_ok, nb_nok, total_questions, selected_emails)
