@@ -431,9 +431,19 @@ if page == "📊 Historique des Audits":
         kpi3.metric("Dernier audit", filtered_df['date_audit'].iloc[0] if not filtered_df.empty else "N/A")
 
         st.markdown("---")
+        
+        # Bouton d'export Excel placé juste avant le tableau
+        excel_data = convert_df_to_excel(filtered_df[['idp', 'type_audit', 'auditeur', 'zone', 'equipe', 'semaine', 'annee', 'date_audit', 'score_pourcentage', 'nb_ok', 'nb_nok', 'total_questions']])
+        st.download_button(
+            label="📥 Exporter l'historique vers Excel",
+            data=excel_data,
+            file_name=f"historique_audits_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True
+        )
+
         st.subheader("📋 Tableau de l'historique (Sélectionnez une ligne pour gérer le rapport)")
 
-        # Affichage du tableau interactif avec sélection de ligne unique
         event = st.dataframe(
             filtered_df[['id', 'idp', 'type_audit', 'auditeur', 'zone', 'equipe', 'semaine', 'annee', 'date_audit', 'score_pourcentage', 'nb_ok', 'nb_nok']],
             use_container_width=True,
@@ -463,21 +473,12 @@ if page == "📊 Historique des Audits":
                 st.download_button(
                     label="📄 Télécharger / Régénérer le Rapport PDF",
                     data=pdf_regen_bytes,
-                    file_name=f"Rapport_{row['type_audit']}_{row['zone']}_S{row['semaine']}.pdf",
+                    file_name=f"Rapport_{row['type_audit']}_{row['zone']}_S{semaine}.pdf",
                     mime="application/pdf",
                     use_container_width=True
                 )
             else:
                 st.warning("Détails non disponibles pour cet ancien audit.")
-
-        st.markdown("---")
-        excel_data = convert_df_to_excel(filtered_df[['idp', 'type_audit', 'auditeur', 'zone', 'equipe', 'semaine', 'annee', 'date_audit', 'score_pourcentage', 'nb_ok', 'nb_nok', 'total_questions']])
-        st.download_button(
-            label="📥 Exporter tout l'historique vers Excel",
-            data=excel_data,
-            file_name=f"historique_audits_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
 
 # ==============================================================================
 # PAGE : PARAMÈTRES / ADMIN
@@ -514,6 +515,7 @@ elif page == "⚙️ Paramètres / Admin":
             else:
                 selected_id = st.selectbox("Sélectionnez l'audit à modifier :", options=df_audits['id'], format_func=lambda x: f"ID #{x}")
                 row_data = df_audits[df_audits['id'] == selected_id].iloc[0]
+                
                 with st.form(key=f"form_edit_{selected_id}"):
                     e_type = st.selectbox("Type d'audit", ["5S", "AM"], index=0 if row_data['type_audit'] == "5S" else 1)
                     e_auditeur = st.text_input("Auditeur", value=str(row_data['auditeur']))
@@ -524,7 +526,8 @@ elif page == "⚙️ Paramètres / Admin":
                     e_ok = st.number_input("Nombre de OK", value=int(row_data['nb_ok']))
                     e_nok = st.number_input("Nombre de NOK", value=int(row_data['nb_nok']))
                     
-                    if st.form_submit_button("💾 Enregistrer"):
+                    submitted_save = st.form_submit_button("💾 Enregistrer les modifications")
+                    if submitted_save:
                         new_total = e_ok + e_nok
                         new_score = round((e_ok / new_total * 100), 1) if new_total > 0 else 0
                         conn.execute("UPDATE historique_audits SET type_audit=?, auditeur=?, zone=?, equipe=?, semaine=?, annee=?, nb_ok=?, nb_nok=?, total_questions=?, score_pourcentage=? WHERE id=?", 
@@ -533,6 +536,16 @@ elif page == "⚙️ Paramètres / Admin":
                         conn.close()
                         st.success("Modifications enregistrées !")
                         st.rerun()
+
+                st.markdown("---")
+                # Bouton de suppression de l'audit sélectionné
+                if st.button("🗑️ Supprimer cet audit définitivement", type="primary", use_container_width=True):
+                    conn.execute("DELETE FROM historique_audits WHERE id = ?", (selected_id,))
+                    conn.commit()
+                    conn.close()
+                    st.success(f"Audit #{selected_id} supprimé avec succès !")
+                    st.rerun()
+
                 if conn: conn.close()
 
         with tab2:
