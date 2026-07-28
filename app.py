@@ -479,9 +479,16 @@ if page == "📊 Historique des Audits":
                 st.download_button(
                     label="📄 Télécharger / Régénérer le Rapport PDF",
                     data=pdf_regen_bytes,
-                    file_name=f"Rapport_{row['type_audit']}_{row['zone']}_S{semaine}.pdf",
+                    file_name=f"Rapport_{row['type_audit']}_{row['zone']}_S{row['semaine']}.pdf",
                     mime="application/pdf",
                     use_container_width=True
+                )
+
+
+
+
+
+                    
                 )
             else:
                 st.warning("Détails non disponibles pour cet ancien audit.")
