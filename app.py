@@ -42,7 +42,6 @@ def init_db():
     c.execute('''CREATE TABLE IF NOT EXISTS emails (id INTEGER PRIMARY KEY AUTOINCREMENT, label TEXT NOT NULL, email TEXT UNIQUE NOT NULL)''')
     c.execute('''CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT NOT NULL)''')
     
-    # Table Historique des Audits avec stockage des détails JSON pour la régénération
     c.execute('''CREATE TABLE IF NOT EXISTS historique_audits (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         idp TEXT,
@@ -60,7 +59,6 @@ def init_db():
         details_json TEXT
     )''')
 
-    # Sécurité : ajoute la colonne details_json si la table existait déjà sans elle
     try:
         c.execute("ALTER TABLE historique_audits ADD COLUMN details_json TEXT")
     except sqlite3.OperationalError:
@@ -206,6 +204,19 @@ def save_audit_in_history(idp, type_audit, auditeur, zone, equipe, semaine, anne
         conn.commit()
     conn.close()
 
+def get_questions_with_ids(type_audit):
+    conn = get_db_connection()
+    rows = conn.execute("SELECT id, categorie, intitule FROM questions WHERE type_audit = ? ORDER BY id ASC", (type_audit,)).fetchall()
+    conn.close()
+    
+    questions_dict = {}
+    for r in rows:
+        cat = r['categorie']
+        if cat not in questions_dict:
+            questions_dict[cat] = []
+        questions_dict[cat].append((r['id'], r['intitule']))
+    return questions_dict
+
 def get_questions_dict(type_audit):
     conn = get_db_connection()
     rows = conn.execute("SELECT categorie, intitule FROM questions WHERE type_audit = ? ORDER BY id ASC", (type_audit,)).fetchall()
@@ -220,7 +231,7 @@ def get_questions_dict(type_audit):
     return questions_dict
 
 # --- FONCTION DE GÉNÉRATION DU PDF ---
-def generate_pdf_report(audit_title, idp, auditeur, zone, equipe, semaine, annee, reponses, questions_dict, taux, nb_ok, nb_nok, total_q):
+def generate_pdf_report(audit_title, idp, auditeur, zone, equipe, semaine, annee, reponses, type_code, taux, nb_ok, nb_nok, total_q):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36)
     story = []
@@ -255,14 +266,14 @@ def generate_pdf_report(audit_title, idp, auditeur, zone, equipe, semaine, annee
     story.append(t_info)
     story.append(Spacer(1, 10))
     
-    q_counter = 0
-    for category, questions in questions_dict.items():
+    q_items_with_ids = get_questions_with_ids(type_code)
+    
+    for category, questions in q_items_with_ids.items():
         story.append(Paragraph(f"<b>{category}</b>", header_s_style))
         
         table_q_data = []
-        for q in questions:
-            q_counter += 1
-            rep = reponses.get(q_counter, reponses.get(str(q_counter), {}))
+        for q_id, q_text in questions:
+            rep = reponses.get(q_id, reponses.get(str(q_id), {}))
             statut_txt = rep.get("statut", "Non répondu")
             comment_txt = rep.get("comment", "")
             
@@ -271,7 +282,7 @@ def generate_pdf_report(audit_title, idp, auditeur, zone, equipe, semaine, annee
             else:
                 status_p = Paragraph("<font color='#dc2626'><b>✕ NOK / NON CONFORME</b></font>", text_normal)
             
-            q_content = [Paragraph(q, text_bold)]
+            q_content = [Paragraph(q_text, text_bold)]
             if comment_txt:
                 q_content.append(Paragraph(f"<i>Observation : {comment_txt}</i>", text_comment))
                 
@@ -433,12 +444,11 @@ if page == "📊 Historique des Audits":
                 with col_btn:
                     if row['details_json']:
                         rep_dict = json.loads(row['details_json'])
-                        q_dict = get_questions_dict(row['type_audit'])
                         
                         pdf_regen_bytes = generate_pdf_report(
                             audit_label_type, row['idp'], row['auditeur'], row['zone'], 
                             row['equipe'], row['semaine'], row['annee'], rep_dict, 
-                            q_dict, row['score_pourcentage'], row['nb_ok'], row['nb_nok'], row['total_questions']
+                            row['type_audit'], row['score_pourcentage'], row['nb_ok'], row['nb_nok'], row['total_questions']
                         )
                         st.download_button(
                             label="📄 Régénérer PDF",
@@ -590,8 +600,8 @@ else:
         location_label = "ÉQUIPEMENT / MACHINE"
         location_options = db_equipements if db_equipements else ["Aucun équipement"]
 
-    questions_dict = get_questions_dict(type_code)
-    total_questions = sum(len(q) for q in questions_dict.values())
+    q_items_with_ids = get_questions_with_ids(type_code)
+    total_questions = sum(len(q_list) for q_list in q_items_with_ids.values())
 
     step_key = f"{prefix_key}_step"
     reponses_key = f"{prefix_key}_reponses"
@@ -625,21 +635,21 @@ else:
 
     elif st.session_state[step_key] == 3:
         st.title(audit_title)
-        q_counter = 0
-        for category, questions in questions_dict.items():
+        for category, questions in q_items_with_ids.items():
             st.markdown(f'<div class="s-header"><span class="badge-s">📌</span><span class="s-title-text">{category}</span></div>', unsafe_allow_html=True)
-            for q in questions:
-                q_counter += 1
-                st.markdown(f"**{q_counter}. {q}**")
-                statut = st.radio(f"hidden_{q_counter}", ["✓ OK / Conforme", "✕ NOK / Non conforme"], key=f"{prefix_key}_q_{q_counter}", index=None, label_visibility="collapsed")
-                comment = st.text_input("Commentaire / Action corrective :", key=f"{prefix_key}_c_{q_counter}")
-                photo = st.file_uploader("📷 Joindre une image :", type=["jpg", "jpeg", "png"], key=f"{prefix_key}_p_{q_counter}")
-                st.session_state[reponses_key][q_counter] = {"statut": statut, "comment": comment, "photo": photo}
+            for q_id, q_text in questions:
+                st.markdown(f"**{q_text}**")
+                statut = st.radio(f"hidden_{q_id}", ["✓ OK / Conforme", "✕ NOK / Non conforme"], key=f"{prefix_key}_q_{q_id}", index=None, label_visibility="collapsed")
+                comment = st.text_input("Commentaire / Action corrective :", key=f"{prefix_key}_c_{q_id}")
+                photo = st.file_uploader("📷 Joindre une image :", type=["jpg", "jpeg", "png"], key=f"{prefix_key}_p_{q_id}")
+                st.session_state[reponses_key][q_id] = {"statut": statut, "comment": comment, "photo": photo}
                 st.markdown("---")
 
         if st.button("✅ Valider et Terminer l'Audit", use_container_width=True):
             reponses = st.session_state[reponses_key]
-            if any(rep["statut"] is None for rep in reponses.values()):
+            # Vérifie qu'on a répondu pour chaque ID de question présent en base
+            all_q_ids = [q_id for q_list in q_items_with_ids.values() for q_id, _ in q_list]
+            if any(q_id not in reponses or reponses[q_id]["statut"] is None for q_id in all_q_ids):
                 st.error("⚠️ Veuillez répondre à toutes les questions.")
             else:
                 st.session_state[step_key] = 4
@@ -670,7 +680,7 @@ else:
 
         pdf_bytes = generate_pdf_report(
             audit_title, idp, auditeur, zone, equipe, semaine, annee, 
-            reponses, questions_dict, taux, nb_ok, nb_nok, total_questions
+            reponses, type_code, taux, nb_ok, nb_nok, total_questions
         )
 
         col_pdf, col_email = st.columns(2)
