@@ -245,6 +245,52 @@ def generate_pdf_report(audit_title, idp, auditeur, zone, equipe, semaine, annee
     buffer.seek(0)
     return buffer.getvalue()
 
+# --- ENVOI DE EMAIL DE RAPPORT ---
+def send_email_with_pdf(pdf_bytes, audit_title, idp, auditeur, zone, equipe, semaine, annee, taux, nb_ok, nb_nok, total_q, recipients):
+    smtp_server = get_config_val("smtp_server")
+    smtp_port = get_config_val("smtp_port")
+    smtp_user = get_config_val("smtp_user")
+    smtp_password = get_config_val("smtp_password")
+
+    if not smtp_server or not smtp_user or not smtp_password:
+        return False, "Configuration SMTP incomplète dans les paramètres."
+
+    msg = MIMEMultipart()
+    msg['From'] = smtp_user
+    msg['To'] = ", ".join(recipients)
+    msg['Subject'] = f"[{audit_title.upper()}] Rapport d'Audit - {zone} (S{semaine}/{annee}) - Conformité : {taux}%"
+
+    body = f"""Bonjour,
+
+Veuillez trouver ci-joint le rapport PDF concernant l'audit ci-dessous :
+
+• Audit : {audit_title}
+• IDP : {idp}
+• Auditeur : {auditeur}
+• Zone / Îlot : {zone}
+• Équipe : {equipe}
+• Période : Semaine {semaine} / {annee}
+• Taux de Conformité : {taux}% ({nb_ok} OK / {nb_nok} NOK sur {total_q} questions)
+
+Cordialement,
+Système d'Audit d'Atelier
+"""
+    msg.attach(MIMEText(body, 'plain'))
+
+    attachment = MIMEApplication(pdf_bytes, _subtype="pdf")
+    attachment.add_header('Content-Disposition', 'attachment', filename=f"Rapport_{audit_title}_{zone}_S{semaine}.pdf")
+    msg.attach(attachment)
+
+    try:
+        server = smtplib.SMTP(smtp_server, int(smtp_port))
+        server.starttls()
+        server.login(smtp_user, smtp_password)
+        server.sendmail(smtp_user, recipients, msg.as_string())
+        server.quit()
+        return True, "E-mail envoyé avec succès !"
+    except Exception as e:
+        return False, f"Erreur lors de l'envoi de l'e-mail : {str(e)}"
+
 # --- STYLES CSS PERSONNALISÉS ---
 st.markdown("""
     <style>
@@ -513,7 +559,7 @@ else:
     if st.session_state[step_key] == 1:
         st.title(f"📋 {audit_title.upper()}")
         aud_sel = st.selectbox("AUDITEUR (NOM & PRÉNOM)", options=["— Sélectionner —"] + db_auditeurs)
-        if st.button("Continuer →"):
+        if st.button("Continuer →", use_container_width=True):
             if aud_sel == "— Sélectionner —":
                 st.error("Sélectionnez un auditeur.")
             else:
@@ -529,9 +575,9 @@ else:
         st.title("PARAMÈTRES DE L'AUDIT")
         st.session_state[f"{prefix_key}_zone"] = st.selectbox("ZONE / ÎLOT", options=db_zones if db_zones else ["Aucune zone"])
         st.session_state[f"{prefix_key}_equipe"] = st.selectbox("ÉQUIPE", options=["Équipe1", "Équipe2", "Équipe3", "Équipe Nuit"])
-        st.session_state[f"{prefix_key}_semaine"] = st.number_input("SEMAINE (ISO)", value=datetime.now().isocalendar()[1])
-        st.session_state[f"{prefix_key}_annee"] = st.number_input("ANNÉE", value=datetime.now().year)
-        if st.button("Démarrer l'audit →"):
+        st.session_state[f"{prefix_key}_semaine"] = st.number_input("SEMAINE (ISO)", value=datetime.now().isocalendar()[1], min_value=1, max_value=53)
+        st.session_state[f"{prefix_key}_annee"] = st.number_input("ANNÉE", value=datetime.now().year, min_value=2020, max_value=2035)
+        if st.button("Démarrer l'audit →", use_container_width=True):
             st.session_state[step_key] = 3
             st.rerun()
 
@@ -544,12 +590,7 @@ else:
         else:
             q_counter = 0
             for category, questions in questions_dict.items():
-                st.markdown(f'''
-                    <div class="s-header">
-                        <span class="badge-s">📌</span>
-                        <span class="s-title-text">{category}</span>
-                    </div>
-                ''', unsafe_allow_html=True)
+                st.markdown(f'<div class="s-header"><span class="badge-s">📌</span><span class="s-title-text">{category}</span></div>', unsafe_allow_html=True)
                 
                 for q in questions:
                     q_counter += 1
@@ -580,7 +621,7 @@ else:
             st.progress(nb_rep / total_questions)
             st.write(f"**{nb_rep} / {total_questions} questions répondues**")
 
-            if st.button("✓ Valider et générer le rapport"):
+            if st.button("✓ Valider et générer le rapport", use_container_width=True):
                 if nb_rep < total_questions:
                     st.warning(f"⚠️ Veuillez répondre à toutes les questions ({nb_rep}/{total_questions}).")
                 else:
@@ -589,7 +630,7 @@ else:
 
     # ÉCRAN 4 : RAPPORT + ENVOI MAIL
     elif st.session_state[step_key] == 4:
-        if st.button("← Retour"):
+        if st.button("← Retour au questionnaire"):
             st.session_state[step_key] = 3
             st.rerun()
 
@@ -631,14 +672,43 @@ else:
             reponses, questions_dict, taux, nb_ok, nb_nok, total_questions
         )
 
+        st.download_button(
+            label="📥 Télécharger le Rapport PDF",
+            data=pdf_bytes,
+            file_name=f"Rapport_{type_code}_{zone}_S{semaine}.pdf",
+            mime="application/pdf",
+            use_container_width=True
+        )
+
+        st.markdown("---")
+        st.subheader("✉️ Envoi du rapport par E-mail")
+        
+        email_list = [e['email'] for e in db_emails]
+        if email_list:
+            selected_recipients = st.multiselect("Sélectionnez les destinataires :", options=email_list, default=email_list)
+            
+            if st.button("🚀 Envoyer le rapport par e-mail", use_container_width=True):
+                if not selected_recipients:
+                    st.error("Veuillez sélectionner au moins un destinataire.")
+                else:
+                    with st.spinner("Envoi de l'e-mail en cours..."):
+                        success, msg = send_email_with_pdf(
+                            pdf_bytes, audit_title, idp, auditeur, zone, equipe, semaine, annee,
+                            taux, nb_ok, nb_nok, total_questions, selected_recipients
+                        )
+                        if success:
+                            st.success(f"✅ {msg}")
+                        else:
+                            st.error(f"❌ {msg}")
+        else:
+            st.info("Aucune adresse e-mail configurée dans les Paramètres.")
+
+        st.markdown("---")
+        st.subheader("📋 Récapitulatif détaillé des réponses")
+        
         q_counter = 0
         for category, questions in questions_dict.items():
-            st.markdown(f'''
-                <div class="s-header">
-                    <span class="badge-s">📌</span>
-                    <span class="s-title-text">{category}</span>
-                </div>
-            ''', unsafe_allow_html=True)
+            st.markdown(f'<div class="s-header"><span class="badge-s">📌</span><span class="s-title-text">{category}</span></div>', unsafe_allow_html=True)
             
             for q in questions:
                 q_counter += 1
@@ -657,76 +727,9 @@ else:
                     st.image(rep["photo"], width=240)
                     
             st.markdown("---")
-
-        st.markdown(f"""
-            <div class="alert-info-custom">
-                ✓ Résultat enregistré (IDP {idp}).
-            </div>
-        """, unsafe_allow_html=True)
-        st.write("")
-
-        destinataires_opts = {f"{e['label']} ({e['email']})": e['email'] for e in db_emails}
         
-        if destinataires_opts:
-            selected_dest = st.selectbox("✉️ Choisir le responsable destinataire :", options=list(destinataires_opts.keys()), key=f"{prefix_key}_dest")
-            target_email = destinataires_opts[selected_dest]
-        else:
-            st.warning("⚠️ Aucune adresse mail configurée dans la page Paramètres.")
-            target_email = None
-
-        c_btn1, c_btn2 = st.columns([1, 2])
-        
-        with c_btn1:
-            st.download_button(
-                label="⬇ Télécharger PDF",
-                data=pdf_bytes,
-                file_name=f"Rapport_{audit_title.replace(' ', '_')}_{zone}_S{semaine}.pdf",
-                mime="application/pdf",
-                use_container_width=True
-            )
-                
-        with c_btn2:
-            if st.button("✉ Envoyer au responsable", use_container_width=True, key=f"{prefix_key}_send"):
-                if not target_email:
-                    st.error("⚠️ Aucun destinataire sélectionné.")
-                else:
-                    try:
-                        SMTP_SERVER = get_config_val("smtp_server")
-                        SMTP_PORT = int(get_config_val("smtp_port"))
-                        SMTP_USER = get_config_val("smtp_user")
-                        SMTP_PASSWORD = get_config_val("smtp_password")
-
-                        msg = MIMEMultipart()
-                        msg['From'] = SMTP_USER
-                        msg['To'] = target_email
-                        msg['Subject'] = f"Rapport {audit_title} - {zone} (Semaine {semaine})"
-
-                        body_text = f"""Bonjour,
-
-Veuillez trouver ci-joint le rapport pour l'audit '{audit_title}' au format PDF.
-
-Résumé rapide :
-- IDP : {idp}
-- Auditeur : {auditeur}
-- Zone : {zone}
-- Taux de conformité : {taux}% ({nb_ok} OK / {nb_nok} NOK)
-
-Cordialement,
-Application d'Audit
-"""
-                        msg.attach(MIMEText(body_text, 'plain'))
-
-                        pdf_filename = f"Rapport_{audit_title.replace(' ', '_')}_{zone}_Semaine_{semaine}.pdf"
-                        part = MIMEApplication(pdf_bytes, Name=pdf_filename)
-                        part['Content-Disposition'] = f'attachment; filename="{pdf_filename}"'
-                        msg.attach(part)
-
-                        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
-                            server.starttls()
-                            server.login(SMTP_USER, SMTP_PASSWORD)
-                            server.sendmail(SMTP_USER, target_email, msg.as_string())
-
-                        st.success(f"✉️ Rapport PDF envoyé avec succès à {target_email} !")
-
-                    except Exception as e:
-                        st.error(f"❌ Échec de l'envoi : {e}")
+        if st.button("🔄 Commencer un nouvel audit", use_container_width=True):
+            st.session_state[step_key] = 1
+            st.session_state[reponses_key] = {}
+            st.session_state[idp_key] = f"022026301{random.randint(10,99)}"
+            st.rerun()
