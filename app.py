@@ -4,6 +4,7 @@ if st.query_params.get("secret") == "download":
 
 import sqlite3
 import random
+import json
 from datetime import datetime
 import smtplib
 import io
@@ -41,7 +42,7 @@ def init_db():
     c.execute('''CREATE TABLE IF NOT EXISTS emails (id INTEGER PRIMARY KEY AUTOINCREMENT, label TEXT NOT NULL, email TEXT UNIQUE NOT NULL)''')
     c.execute('''CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT NOT NULL)''')
     
-    # Table Historique des Audits
+    # Table Historique des Audits avec stockage des détails JSON pour la régénération
     c.execute('''CREATE TABLE IF NOT EXISTS historique_audits (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         idp TEXT,
@@ -55,7 +56,8 @@ def init_db():
         score_pourcentage REAL,
         nb_ok INTEGER,
         nb_nok INTEGER,
-        total_questions INTEGER
+        total_questions INTEGER,
+        details_json TEXT
     )''')
 
     c.execute('''CREATE TABLE IF NOT EXISTS questions (
@@ -176,16 +178,26 @@ def delete_item(table, item_id):
     conn.commit()
     conn.close()
 
-def save_audit_in_history(idp, type_audit, auditeur, zone, equipe, semaine, annee, score, nb_ok, nb_nok, total_q):
+def save_audit_in_history(idp, type_audit, auditeur, zone, equipe, semaine, annee, score, nb_ok, nb_nok, total_q, reponses_dict_raw):
     conn = get_db_connection()
     c = conn.cursor()
     c.execute("SELECT id FROM historique_audits WHERE idp = ?", (idp,))
     if c.fetchone() is None:
         date_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+        
+        # Sérialisation propre des réponses (sans les objets fichiers images bruts pour éviter l'erreur de sérialisation JSON)
+        serializable_reponses = {}
+        for k, v in reponses_dict_raw.items():
+            serializable_reponses[str(k)] = {
+                "statut": v.get("statut"),
+                "comment": v.get("comment", "")
+            }
+        details_str = json.dumps(serializable_reponses)
+
         c.execute('''INSERT INTO historique_audits 
-                    (idp, type_audit, auditeur, zone, equipe, semaine, annee, date_audit, score_pourcentage, nb_ok, nb_nok, total_questions)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
-                  (idp, type_audit, auditeur, zone, equipe, semaine, annee, date_str, score, nb_ok, nb_nok, total_q))
+                    (idp, type_audit, auditeur, zone, equipe, semaine, annee, date_audit, score_pourcentage, nb_ok, nb_nok, total_questions, details_json)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                  (idp, type_audit, auditeur, zone, equipe, semaine, annee, date_str, score, nb_ok, nb_nok, total_q, details_str))
         conn.commit()
     conn.close()
 
@@ -245,12 +257,12 @@ def generate_pdf_report(audit_title, idp, auditeur, zone, equipe, semaine, annee
         table_q_data = []
         for q in questions:
             q_counter += 1
-            rep = reponses.get(q_counter, {})
+            # Gère les deux structures de données (dictionnaire live ou json parsé)
+            rep = reponses.get(q_counter, reponses.get(str(q_counter), {}))
             statut_txt = rep.get("statut", "Non répondu")
             comment_txt = rep.get("comment", "")
-            photo_file = rep.get("photo", None)
             
-            if statut_txt and statut_txt.startswith("✓"):
+            if statut_txt and (str(statust_txt).startswith("✓") or "OK" in str(statut_txt)):
                 status_p = Paragraph("<font color='#16a34a'><b>✓ OK / CONFORME</b></font>", text_normal)
             else:
                 status_p = Paragraph("<font color='#dc2626'><b>✕ NOK / NON CONFORME</b></font>", text_normal)
@@ -260,8 +272,10 @@ def generate_pdf_report(audit_title, idp, auditeur, zone, equipe, semaine, annee
                 q_content.append(Paragraph(f"<i>Observation : {comment_txt}</i>", text_comment))
                 
             img_element = ""
-            if photo_file is not None:
+            # Si un fichier image est présent dans le dictionnaire live
+            if isinstance(rep.get("photo"), io.BytesIO) or hasattr(rep.get("photo"), "read"):
                 try:
+                    photo_file = rep.get("photo")
                     photo_file.seek(0)
                     img_data = io.BytesIO(photo_file.read())
                     photo_file.seek(0)
@@ -286,7 +300,6 @@ def generate_pdf_report(audit_title, idp, auditeur, zone, equipe, semaine, annee
     buffer.seek(0)
     return buffer.getvalue()
 
-# --- FONCTION DE GÉNÉRATION DE L'EXCEL ---
 def convert_df_to_excel(df):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
@@ -294,7 +307,6 @@ def convert_df_to_excel(df):
     output.seek(0)
     return output.getvalue()
 
-# --- ENVOI DE EMAIL DE RAPPORT ---
 def send_email_with_pdf(pdf_bytes, audit_title, idp, auditeur, zone, equipe, semaine, annee, taux, nb_ok, nb_nok, total_q, recipients):
     smtp_server = get_config_val("smtp_server")
     smtp_port = get_config_val("smtp_port")
@@ -346,70 +358,26 @@ Système d'Audit d'Atelier
 st.markdown("""
     <style>
     .stApp { background-color: #f8fafc; }
-    
     .s-header { display: flex; align-items: center; gap: 10px; margin-top: 25px; margin-bottom: 15px; }
     .badge-s { background-color: #0f172a; color: white; font-weight: 800; padding: 4px 10px; border-radius: 6px; font-size: 13px; }
     .s-title-text { font-size: 16px; font-weight: 800; color: #0f172a; letter-spacing: -0.3px; }
-    
     .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 20px; }
     .info-card { background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.02); }
     .info-label { font-size: 11px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; }
     .info-val { font-size: 15px; font-weight: 800; color: #0f172a; margin-top: 2px; }
-    .info-val-nok { font-size: 15px; font-weight: 800; color: #dc2626; margin-top: 2px; }
     .score-banner { background-color: #0f172a; color: white; border-radius: 12px; padding: 24px; text-align: center; margin: 20px 0; }
     .score-percent { font-size: 56px; font-weight: 900; line-height: 1; margin-bottom: 6px; }
     .score-subtitle { font-size: 12px; font-weight: 800; letter-spacing: 1px; color: #94a3b8; text-transform: uppercase; }
     .score-detail { font-size: 14px; font-weight: 600; margin-top: 8px; color: #cbd5e1; }
     div.stButton > button { border-radius: 8px; font-weight: 700; }
 
-    div[data-testid="stRadio"] > div[role="radiogroup"] {
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-        margin-top: 6px;
-    }
-
-    div[data-testid="stRadio"] label {
-        background-color: #ffffff;
-        border: 2px solid #cbd5e1;
-        border-radius: 10px;
-        padding: 10px 16px !important;
-        font-weight: 700 !important;
-        cursor: pointer;
-        transition: all 0.2s ease;
-    }
-
-    div[data-testid="stRadio"] label:nth-of-type(1):has(input:checked) {
-        background-color: #f0fdf4 !important;
-        border-color: #16a34a !important;
-        color: #15803d !important;
-    }
-    div[data-testid="stRadio"] label:nth-of-type(1):has(input:checked) div[role="radio"] {
-        background-color: #16a34a !important;
-        border-color: #16a34a !important;
-        box-shadow: inset 0 0 0 3px #ffffff !important;
-    }
-
-    div[data-testid="stRadio"] label:nth-of-type(2):has(input:checked) {
-        background-color: #fef2f2 !important;
-        border-color: #dc2626 !important;
-        color: #b91c1c !important;
-    }
-    div[data-testid="stRadio"] label:nth-of-type(2):has(input:checked) div[role="radio"] {
-        background-color: #dc2626 !important;
-        border-color: #dc2626 !important;
-        box-shadow: inset 0 0 0 3px #ffffff !important;
-    }
-
-    section[data-testid="stSidebar"] div[data-testid="stRadio"] label {
-        border-color: #e2e8f0 !important;
-        background-color: #ffffff !important;
-        color: #0f172a !important;
-    }
+    div[data-testid="stRadio"] > div[role="radiogroup"] { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
+    div[data-testid="stRadio"] label { background-color: #ffffff; border: 2px solid #cbd5e1; border-radius: 10px; padding: 10px 16px !important; font-weight: 700 !important; cursor: pointer; transition: all 0.2s ease; }
+    div[data-testid="stRadio"] label:nth-of-type(1):has(input:checked) { background-color: #f0fdf4 !important; border-color: #16a34a !important; color: #15803d !important; }
+    div[data-testid="stRadio"] label:nth-of-type(2):has(input:checked) { background-color: #fef2f2 !important; border-color: #dc2626 !important; color: #b91c1c !important; }
     </style>
 """, unsafe_allow_html=True)
 
-# --- NAVIGATION SIDEBAR ---
 st.sidebar.title("📌 Menu")
 page = st.sidebar.radio("Navigation", ["📋 Audit 5S Hebdo", "🛠️ Audit Auto Maintenance", "📊 Historique des Audits", "⚙️ Paramètres / Admin"])
 
@@ -417,7 +385,7 @@ if "admin_authenticated" not in st.session_state:
     st.session_state.admin_authenticated = False
 
 # ==============================================================================
-# PAGE : HISTORIQUE DES AUDITS
+# PAGE : HISTORIQUE DES AUDITS & RÉGÉNÉRATION PDF
 # ==============================================================================
 if page == "📊 Historique des Audits":
     st.title("📊 Historique des Audits Réalisés")
@@ -447,37 +415,47 @@ if page == "📊 Historique des Audits":
         kpi3.metric("Dernier audit", filtered_df['date_audit'].iloc[0] if not filtered_df.empty else "N/A")
 
         st.markdown("---")
+        st.subheader("📥 Téléchargement / Régénération des Rapports PDF par Audit")
 
-        df_display = filtered_df.rename(columns={
-            'idp': 'IDP',
-            'type_audit': 'Type Audit',
-            'auditeur': 'Auditeur',
-            'zone': 'Zone / Équipement',
-            'equipe': 'Équipe',
-            'semaine': 'Semaine',
-            'annee': 'Année',
-            'date_audit': 'Date & Heure',
-            'score_pourcentage': 'Résultat (%)',
-            'nb_ok': 'OK',
-            'nb_nok': 'NOK',
-            'total_questions': 'Total Questions'
-        })
+        # Affichage interactif pour régénérer le PDF de n'importe quel ancien audit
+        for _, row in filtered_df.iterrows():
+            audit_label_type = "Audit 5S Hebdo" if row['type_audit'] == "5S" else "Audit Auto Maintenance"
+            with st.expander(f"Audit #{row['id']} | IDP : {row['idp']} | [{row['type_audit']}] {row['zone']} - S{row['semaine']}/{row['annee']} ({row['auditeur']} - {row['score_pourcentage']}%)"):
+                col_info1, col_info2, col_btn = st.columns([2, 2, 1])
+                with col_info1:
+                    st.write(f"**Date :** {row['date_audit']}")
+                    st.write(f"**Équipe :** {row['equipe']}")
+                with col_info2:
+                    st.write(f"**Résultat :** {row['nb_ok']} OK / {row['nb_nok']} NOK")
+                    st.write(f"**Conformité :** {row['score_pourcentage']}%")
+                with col_btn:
+                    # Bouton de régénération directe du PDF depuis l'historique
+                    if row['details_json']:
+                        rep_dict = json.loads(row['details_json'])
+                        q_dict = get_questions_dict(row['type_audit'])
+                        
+                        pdf_regen_bytes = generate_pdf_report(
+                            audit_label_type, row['idp'], row['auditeur'], row['zone'], 
+                            row['equipe'], row['semaine'], row['annee'], rep_dict, 
+                            q_dict, row['score_pourcentage'], row['nb_ok'], row['nb_nok'], row['total_questions']
+                        )
+                        st.download_button(
+                            label="📄 Régénérer PDF",
+                            data=pdf_regen_bytes,
+                            file_name=f"Rapport_{row['type_audit']}_{row['zone']}_S{row['semaine']}.pdf",
+                            mime="application/pdf",
+                            key=f"regen_pdf_{row['id']}"
+                        )
+                    else:
+                        st.warning("Détails non disponibles.")
 
-        col_tbl, col_exp = st.columns([4, 1])
-        with col_exp:
-            excel_data = convert_df_to_excel(df_display[['IDP', 'Type Audit', 'Auditeur', 'Zone / Équipement', 'Équipe', 'Semaine', 'Année', 'Date & Heure', 'Résultat (%)', 'OK', 'NOK', 'Total Questions']])
-            st.download_button(
-                label="📥 Exporter vers Excel",
-                data=excel_data,
-                file_name=f"historique_audits_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True
-            )
-
-        st.dataframe(
-            df_display[['IDP', 'Type Audit', 'Auditeur', 'Zone / Équipement', 'Équipe', 'Semaine', 'Année', 'Date & Heure', 'Résultat (%)', 'OK', 'NOK']],
-            use_container_width=True,
-            hide_index=True
+        st.markdown("---")
+        excel_data = convert_df_to_excel(filtered_df[['idp', 'type_audit', 'auditeur', 'zone', 'equipe', 'semaine', 'annee', 'date_audit', 'score_pourcentage', 'nb_ok', 'nb_nok', 'total_questions']])
+        st.download_button(
+            label="📥 Exporter tout l'historique vers Excel",
+            data=excel_data,
+            file_name=f"historique_audits_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
 # ==============================================================================
@@ -489,7 +467,6 @@ elif page == "⚙️ Paramètres / Admin":
     if not st.session_state.admin_authenticated:
         st.subheader("🔒 Accès Administrateur")
         input_pwd = st.text_input("Saisissez le mot de passe de configuration :", type="password")
-        
         if st.button("Se connecter", use_container_width=True):
             if input_pwd == get_config_val("admin_password"):
                 st.session_state.admin_authenticated = True
@@ -497,231 +474,98 @@ elif page == "⚙️ Paramètres / Admin":
                 st.rerun()
             else:
                 st.error("❌ Mot de passe incorrect.")
-    
     else:
         if st.sidebar.button("🚪 Déconnexion Admin"):
             st.session_state.admin_authenticated = False
             st.rerun()
 
         tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
-            "✏️ Édition / Admin Audits", 
-            "📝 Checklists / Questions", 
-            "👤 Auditeurs", 
-            "🏭 Zones / Îlots (5S)", 
-            "⚙️ Équipements / Machines (AM)",
-            "📧 Emails Responsables", 
-            "🔐 Sécurité & SMTP"
+            "✏️ Édition / Admin Audits", "📝 Checklists", "👤 Auditeurs", "🏭 Zones", "⚙️ Équipements", "📧 Emails", "🔐 Sécurité & SMTP"
         ])
 
-        # --- ONGLET 1 : ÉDITION ET SUPPRESSION DES AUDITS HISTORIQUES ---
         with tab1:
             st.subheader("🛠️ Gérer / Modifier l'Historique des Audits")
-            
             conn = get_db_connection()
             df_audits = pd.read_sql_query("SELECT * FROM historique_audits ORDER BY id DESC", conn)
-            
             if df_audits.empty:
-                st.info("Aucun audit à modifier ou supprimer.")
+                st.info("Aucun audit à modifier.")
                 conn.close()
             else:
-                subtab_edit, subtab_del = st.tabs(["✏️ Modifier un Audit", "🗑️ Supprimer un Audit"])
-                
-                liste_options = {
-                    row['id']: f"ID #{row['id']} | [{row['type_audit']}] {row['zone']} - Semaine {row['semaine']}/{row['annee']} ({row['auditeur']})"
-                    for _, row in df_audits.iterrows()
-                }
-
-                with subtab_edit:
-                    selected_id = st.selectbox("Sélectionnez l'audit à modifier :", options=list(liste_options.keys()), format_func=lambda x: liste_options[x], key="edit_select_box")
-                    row_data = df_audits[df_audits['id'] == selected_id].iloc[0]
-
-                    with st.form(key=f"form_edit_audit_{selected_id}"):
-                        c_a, c_b = st.columns(2)
-                        with c_a:
-                            e_type = st.selectbox("Type d'audit", ["5S", "AM"], index=0 if row_data['type_audit'] == "5S" else 1)
-                            e_auditeur = st.text_input("Auditeur", value=str(row_data['auditeur']))
-                            e_zone = st.text_input("Zone / Machine", value=str(row_data['zone']))
-                            e_equipe = st.text_input("Équipe", value=str(row_data['equipe']))
-                        
-                        with c_b:
-                            e_semaine = st.number_input("Semaine", value=int(row_data['semaine']), min_value=1, max_value=53)
-                            e_annee = st.number_input("Année", value=int(row_data['annee']), min_value=2020, max_value=2035)
-                            e_ok = st.number_input("Nombre de OK", value=int(row_data['nb_ok']), min_value=0)
-                            e_nok = st.number_input("Nombre de NOK", value=int(row_data['nb_nok']), min_value=0)
-
-                        new_total = e_ok + e_nok
-                        new_score = round((e_ok / new_total * 100), 1) if new_total > 0 else 0.0
-
-                        st.info(f"📊 **Nouveau Total :** {new_total} questions  |  🎯 **Nouveau Taux :** {new_score}%")
-
-                        if st.form_submit_button("💾 Enregistrer les modifications", use_container_width=True):
-                            c_db = conn.cursor()
-                            c_db.execute("""
-                                UPDATE historique_audits 
-                                SET type_audit = ?, auditeur = ?, zone = ?, equipe = ?, semaine = ?, annee = ?, nb_ok = ?, nb_nok = ?, total_questions = ?, score_pourcentage = ?
-                                WHERE id = ?
-                            """, (e_type, e_auditeur, e_zone, e_equipe, e_semaine, e_annee, e_ok, e_nok, new_total, new_score, selected_id))
-                            conn.commit()
-                            conn.close()
-                            st.success(f"✅ Audit #{selected_id} mis à jour avec succès !")
-                            st.rerun()
-
-                with subtab_del:
-                    selected_id_del = st.selectbox("Sélectionnez l'audit à supprimer :", options=list(liste_options.keys()), format_func=lambda x: liste_options[x], key="del_select_box")
-                    st.warning("⚠️ Attention, la suppression est définitive.")
+                selected_id = st.selectbox("Sélectionnez l'audit à modifier :", options=df_audits['id'], format_func=lambda x: f"ID #{x}")
+                row_data = df_audits[df_audits['id'] == selected_id].iloc[0]
+                with st.form(key=f"form_edit_{selected_id}"):
+                    e_type = st.selectbox("Type d'audit", ["5S", "AM"], index=0 if row_data['type_audit'] == "5S" else 1)
+                    e_auditeur = st.text_input("Auditeur", value=str(row_data['auditeur']))
+                    e_zone = st.text_input("Zone / Machine", value=str(row_data['zone']))
+                    e_equipe = st.text_input("Équipe", value=str(row_data['equipe']))
+                    e_semaine = st.number_input("Semaine", value=int(row_data['semaine']))
+                    e_annee = st.number_input("Année", value=int(row_data['annee']))
+                    e_ok = st.number_input("Nombre de OK", value=int(row_data['nb_ok']))
+                    e_nok = st.number_input("Nombre de NOK", value=int(row_data['nb_nok']))
                     
-                    if st.button("❌ Supprimer définitivement l'audit", type="primary"):
-                        c_db = conn.cursor()
-                        c_db.execute("DELETE FROM historique_audits WHERE id = ?", (selected_id_del,))
+                    if st.form_submit_button("💾 Enregistrer"):
+                        new_total = e_ok + e_nok
+                        new_score = round((e_ok / new_total * 100), 1) if new_total > 0 else 0
+                        conn.execute("UPDATE historique_audits SET type_audit=?, auditeur=?, zone=?, equipe=?, semaine=?, annee=?, nb_ok=?, nb_nok=?, total_questions=?, score_pourcentage=? WHERE id=?", 
+                                     (e_type, e_auditeur, e_zone, e_equipe, e_semaine, e_annee, e_ok, e_nok, new_total, new_score, selected_id))
                         conn.commit()
                         conn.close()
-                        st.success(f"✅ Audit #{selected_id_del} supprimé !")
+                        st.success("Modifications enregistrées !")
                         st.rerun()
-                
                 if conn: conn.close()
 
         with tab2:
-            st.subheader("📝 Modifier les Checklists d'Audit")
-            selected_audit_type = st.selectbox("Choisir l'audit à modifier :", ["5S", "AM"], format_func=lambda x: "Audit 5S Hebdo" if x == "5S" else "Audit Auto Maintenance (AM)")
+            st.subheader("📝 Modifier les Checklists")
+            selected_audit_type = st.selectbox("Audit :", ["5S", "AM"])
+            q_items = get_questions_dict(selected_audit_type)
+            for cat, qs in q_items.items():
+                st.markdown(f"**{cat}**")
+                for q in qs:
+                    st.write(f"• {q}")
             
-            conn = get_db_connection()
-            q_items = conn.execute("SELECT * FROM questions WHERE type_audit = ? ORDER BY id ASC", (selected_audit_type,)).fetchall()
-            conn.close()
-
-            cats = list(dict.fromkeys([q['categorie'] for q in q_items])) if q_items else []
-            
-            st.markdown("---")
-            st.markdown("#### Questions existantes :")
-            if not q_items:
-                st.info("Aucune question enregistrée pour cet audit.")
-            else:
-                for c in cats:
-                    st.markdown(f"**📌 {c}**")
-                    cat_qs = [q for q in q_items if q['categorie'] == c]
-                    for q_row in cat_qs:
-                        col1, col2 = st.columns([5, 1])
-                        col1.write(f"• {q_row['intitule']}")
-                        if col2.button("❌", key=f"del_q_{q_row['id']}"):
-                            delete_item("questions", q_row['id'])
-                            st.rerun()
-
-            st.markdown("---")
-            st.markdown("#### ➕ Ajouter une nouvelle question")
-            
-            existing_cats = cats if cats else (["S1 – DÉBARRASSER", "S2 – RANGER", "S3 – TENIR PROPRE", "S4 – STANDARDISER", "S5 – MAINTENIR"] if selected_audit_type == "5S" else ["État du poste de travail", "Kit AM et EPI", "Standard d'AM", "Réalisation des Tâches", "Traçabilité et Enregistrement"])
-            
-            cat_option = st.radio("Catégorie :", ["Catégorie existante", "Créer une nouvelle catégorie"], horizontal=True)
-            
-            if cat_option == "Catégorie existante":
-                cat_val = st.selectbox("Sélectionner la catégorie :", options=existing_cats)
-            else:
-                cat_val = st.text_input("Nom de la nouvelle catégorie :", key="new_cat_name")
-
-            new_q_text = st.text_area("Intitulé du critère / question d'audit :", key="new_q_text")
-            
-            if st.button("Ajouter la question", use_container_width=True):
-                if cat_val and new_q_text.strip():
-                    add_item("questions", ["type_audit", "categorie", "intitule"], [selected_audit_type, cat_val.strip(), new_q_text.strip()])
+            new_cat = st.text_input("Nouvelle Catégorie")
+            new_q = st.text_area("Nouvelle Question")
+            if st.button("Ajouter la question"):
+                if new_cat and new_q:
+                    add_item("questions", ["type_audit", "categorie", "intitule"], [selected_audit_type, new_cat, new_q])
                     st.rerun()
-                else:
-                    st.error("Veuillez remplir la catégorie et l'intitulé.")
-
-            st.markdown("---")
-            if st.button("🔄 Réinitialiser les questions par défaut (5S & AM)"):
-                conn = get_db_connection()
-                conn.execute("DELETE FROM questions")
-                seed_default_questions(conn.cursor())
-                conn.commit()
-                conn.close()
-                st.success("Checklists réinitialisées aux valeurs d'origine !")
-                st.rerun()
 
         with tab3:
-            st.subheader("Liste des Auditeurs")
             for a in get_items("auditeurs"):
                 c1, c2 = st.columns([4, 1])
-                c1.write(f"• **{a['nom']}**")
-                if c2.button("❌", key=f"del_aud_{a['id']}"):
-                    delete_item("auditeurs", a['id'])
-                    st.rerun()
-            st.markdown("---")
-            new_aud = st.text_input("Nom & Prénom de l'auditeur", key="input_aud")
-            if st.button("Ajouter l'auditeur"):
-                if new_aud.strip():
-                    add_item("auditeurs", ["nom"], [new_aud.strip()])
-                    st.rerun()
+                c1.write(a['nom'])
+                if c2.button("❌", key=f"aud_{a['id']}"): delete_item("auditeurs", a['id']); st.rerun()
+            new_aud = st.text_input("Nouvel auditeur")
+            if st.button("Ajouter auditeur") and new_aud.strip(): add_item("auditeurs", ["nom"], [new_aud.strip()]); st.rerun()
 
         with tab4:
-            st.subheader("Liste des Zones / Îlots (Pour Audit 5S)")
             for z in get_items("zones"):
                 c1, c2 = st.columns([4, 1])
-                c1.write(f"• **{z['nom']}**")
-                if c2.button("❌", key=f"del_zone_{z['id']}"):
-                    delete_item("zones", z['id'])
-                    st.rerun()
-            st.markdown("---")
-            new_z = st.text_input("Nom de la Zone / Îlot", key="input_zone")
-            if st.button("Ajouter la zone"):
-                if new_z.strip():
-                    add_item("zones", ["nom"], [new_z.strip()])
-                    st.rerun()
+                c1.write(z['nom'])
+                if c2.button("❌", key=f"zone_{z['id']}"): delete_item("zones", z['id']); st.rerun()
+            new_z = st.text_input("Nouvelle Zone")
+            if st.button("Ajouter zone") and new_z.strip(): add_item("zones", ["nom"], [new_z.strip()]); st.rerun()
 
         with tab5:
-            st.subheader("Liste des Équipements / Machines (Pour Audit AM)")
             for eq in get_items("equipements"):
                 c1, c2 = st.columns([4, 1])
-                c1.write(f"• **{eq['nom']}**")
-                if c2.button("❌", key=f"del_eq_{eq['id']}"):
-                    delete_item("equipements", eq['id'])
-                    st.rerun()
-            st.markdown("---")
-            new_eq = st.text_input("Nom de l'Équipement / Machine", key="input_eq")
-            if st.button("Ajouter l'équipement"):
-                if new_eq.strip():
-                    add_item("equipements", ["nom"], [new_eq.strip()])
-                    st.rerun()
+                c1.write(eq['nom'])
+                if c2.button("❌", key=f"eq_{eq['id']}"): delete_item("equipements", eq['id']); st.rerun()
+            new_eq = st.text_input("Nouvel Équipement")
+            if st.button("Ajouter équipement") and new_eq.strip(): add_item("equipements", ["nom"], [new_eq.strip()]); st.rerun()
 
         with tab6:
-            st.subheader("Adresses E-mails des Destinataires")
             for e in get_items("emails"):
                 c1, c2 = st.columns([4, 1])
-                c1.write(f"• **{e['label']}** : `{e['email']}`")
-                if c2.button("❌", key=f"del_email_{e['id']}"):
-                    delete_item("emails", e['id'])
-                    st.rerun()
-            st.markdown("---")
-            lbl = st.text_input("Libellé / Rôle (ex: Chef d'atelier)", key="input_lbl")
-            em = st.text_input("Adresse e-mail", key="input_em")
-            if st.button("Ajouter l'adresse e-mail"):
-                if lbl.strip() and em.strip():
-                    add_item("emails", ["label", "email"], [lbl.strip(), em.strip()])
-                    st.rerun()
+                c1.write(f"{e['label']} : {e['email']}")
+                if c2.button("❌", key=f"em_{e['id']}"): delete_item("emails", e['id']); st.rerun()
+            lbl = st.text_input("Libellé")
+            em = st.text_input("Email")
+            if st.button("Ajouter email") and lbl and em: add_item("emails", ["label", "email"], [lbl, em]); st.rerun()
 
         with tab7:
-            st.subheader("🔑 Changer le mot de passe d'accès aux Paramètres")
-            current_pwd = get_config_val("admin_password")
-            new_pwd = st.text_input("Nouveau mot de passe Admin", type="password", value=current_pwd)
-            if st.button("Mettre à jour le mot de passe"):
-                if new_pwd.strip():
-                    set_config_val("admin_password", new_pwd.strip())
-                    st.success("✅ Mot de passe mis à jour !")
-                else:
-                    st.error("Le mot de passe ne peut pas être vide.")
-
-            st.markdown("---")
-            st.subheader("⚙️ Configuration SMTP (Envoi d'e-mails)")
-            
-            cfg_server = st.text_input("Serveur SMTP", value=get_config_val("smtp_server"))
-            cfg_port = st.text_input("Port SMTP", value=get_config_val("smtp_port"))
-            cfg_user = st.text_input("Utilisateur / E-mail expéditeur", value=get_config_val("smtp_user"))
-            cfg_pass = st.text_input("Mot de passe SMTP / Application", type="password", value=get_config_val("smtp_password"))
-            
-            if st.button("Sauvegarder la configuration SMTP"):
-                set_config_val("smtp_server", cfg_server.strip())
-                set_config_val("smtp_port", cfg_port.strip())
-                set_config_val("smtp_user", cfg_user.strip())
-                set_config_val("smtp_password", cfg_pass.strip())
-                st.success("✅ Configuration SMTP enregistrée !")
+            cfg_pass = st.text_input("Nouveau mot de passe Admin", type="password")
+            if st.button("Mettre à jour mot de passe"): set_config_val("admin_password", cfg_pass); st.success("Mis à jour !")
 
 # ==============================================================================
 # PAGES : AUDITS (5S & AUTO MAINTENANCE)
@@ -756,7 +600,6 @@ else:
     if reponses_key not in st.session_state: st.session_state[reponses_key] = {}
     if idp_key not in st.session_state: st.session_state[idp_key] = f"022026301{random.randint(10,99)}"
 
-    # ÉCRAN 1 : IDENTIFICATION
     if st.session_state[step_key] == 1:
         st.title(f"📋 {audit_title.upper()}")
         aud_sel = st.selectbox("AUDITEUR (NOM & PRÉNOM)", options=["— Sélectionner —"] + db_auditeurs)
@@ -768,11 +611,8 @@ else:
                 st.session_state[step_key] = 2
                 st.rerun()
 
-    # ÉCRAN 2 : PARAMÈTRES AUDIT
     elif st.session_state[step_key] == 2:
-        if st.button("← Retour"):
-            st.session_state[step_key] = 1
-            st.rerun()
+        if st.button("← Retour"): st.session_state[step_key] = 1; st.rerun()
         st.title("PARAMÈTRES DE L'AUDIT")
         st.session_state[f"{prefix_key}_zone"] = st.selectbox(location_label, options=location_options)
         st.session_state[f"{prefix_key}_equipe"] = st.selectbox("ÉQUIPE", options=["Équipe1", "Équipe2", "Équipe3", "Équipe Nuit"])
@@ -782,50 +622,28 @@ else:
             st.session_state[step_key] = 3
             st.rerun()
 
-    # ÉCRAN 3 : QUESTIONNAIRE
     elif st.session_state[step_key] == 3:
         st.title(audit_title)
-        
-        if total_questions == 0:
-            st.warning("⚠️ Aucune question enregistrée pour cet audit. Rendez-vous dans les Paramètres/Admin pour ajouter des questions.")
-        else:
-            q_counter = 0
-            for category, questions in questions_dict.items():
-                st.markdown(f'<div class="s-header"><span class="badge-s">📌</span><span class="s-title-text">{category}</span></div>', unsafe_allow_html=True)
-                
-                for q in questions:
-                    q_counter += 1
-                    st.markdown(f"**{q_counter}. {q}**")
-                    
-                    statut = st.radio(
-                        f"hidden_label_{q_counter}", 
-                        ["✓ OK / Conforme", "✕ NOK / Non conforme"], 
-                        key=f"{prefix_key}_q_{q_counter}", 
-                        index=None,
-                        label_visibility="collapsed"
-                    )
+        q_counter = 0
+        for category, questions in questions_dict.items():
+            st.markdown(f'<div class="s-header"><span class="badge-s">📌</span><span class="s-title-text">{category}</span></div>', unsafe_allow_html=True)
+            for q in questions:
+                q_counter += 1
+                st.markdown(f"**{q_counter}. {q}**")
+                statut = st.radio(f"hidden_{q_counter}", ["✓ OK / Conforme", "✕ NOK / Non conforme"], key=f"{prefix_key}_q_{q_counter}", index=None, label_visibility="collapsed")
+                comment = st.text_input("Commentaire / Action corrective :", key=f"{prefix_key}_c_{q_counter}")
+                photo = st.file_uploader("📷 Joindre une image :", type=["jpg", "jpeg", "png"], key=f"{prefix_key}_p_{q_counter}")
+                st.session_state[reponses_key][q_counter] = {"statut": statut, "comment": comment, "photo": photo}
+                st.markdown("---")
 
-                    comment = st.text_input("Commentaire / Action corrective :", key=f"{prefix_key}_c_{q_counter}")
-                    photo = st.file_uploader("📷 Prendre une photo / Joindre une image :", type=["jpg", "jpeg", "png"], key=f"{prefix_key}_p_{q_counter}")
+        if st.button("✅ Valider et Terminer l'Audit", use_container_width=True):
+            reponses = st.session_state[reponses_key]
+            if any(rep["statut"] is None for rep in reponses.values()):
+                st.error("⚠️ Veuillez répondre à toutes les questions.")
+            else:
+                st.session_state[step_key] = 4
+                st.rerun()
 
-                    st.session_state[reponses_key][q_counter] = {
-                        "statut": statut,
-                        "comment": comment,
-                        "photo": photo
-                    }
-                    st.markdown("---")
-
-            if st.button("✅ Valider et Terminer l'Audit", use_container_width=True):
-                reponses = st.session_state[reponses_key]
-                non_repondues = [idx for idx, rep in reponses.items() if rep["statut"] is None]
-
-                if non_repondues:
-                    st.error(f"⚠️ Veuillez répondre à toutes les questions avant de valider (Questions non renseignées : {non_repondues}).")
-                else:
-                    st.session_state[step_key] = 4
-                    st.rerun()
-
-    # ÉCRAN 4 : RÉSUMÉ & ENVOI PDF
     elif st.session_state[step_key] == 4:
         reponses = st.session_state[reponses_key]
         nb_ok = sum(1 for rep in reponses.values() if rep["statut"] and rep["statut"].startswith("✓"))
@@ -839,8 +657,8 @@ else:
         annee = st.session_state.get(f"{prefix_key}_annee", 2026)
         idp = st.session_state.get(idp_key, "N/A")
 
-        # Sauvegarde automatique dans l'historique de la BD
-        save_audit_in_history(idp, type_code, auditeur, zone, equipe, semaine, annee, taux, nb_ok, nb_nok, total_questions)
+        # Sauvegarde complète incluant le JSON des réponses pour permettre la régénération ultérieure
+        save_audit_in_history(idp, type_code, auditeur, zone, equipe, semaine, annee, taux, nb_ok, nb_nok, total_questions, reponses)
 
         st.markdown(f"""
             <div class="score-banner">
@@ -850,18 +668,6 @@ else:
             </div>
         """, unsafe_allow_html=True)
 
-        lbl_card = "ÉQUIPEMENT / MACHINE" if type_code == "AM" else "ZONE / ÎLOT"
-
-        st.markdown(f"""
-            <div class="info-grid">
-                <div class="info-card"><div class="info-label">AUDITEUR</div><div class="info-val">{auditeur}</div></div>
-                <div class="info-card"><div class="info-label">{lbl_card}</div><div class="info-val">{zone}</div></div>
-                <div class="info-card"><div class="info-label">ÉQUIPE</div><div class="info-val">{equipe}</div></div>
-                <div class="info-card"><div class="info-label">PÉRIODE</div><div class="info-val">Semaine {semaine} / {annee}</div></div>
-            </div>
-        """, unsafe_allow_html=True)
-
-        # Génération du fichier PDF en mémoire
         pdf_bytes = generate_pdf_report(
             audit_title, idp, auditeur, zone, equipe, semaine, annee, 
             reponses, questions_dict, taux, nb_ok, nb_nok, total_questions
@@ -879,25 +685,13 @@ else:
 
         with col_email:
             st.subheader("📧 Envoi par e-mail")
-            if not db_emails:
-                st.warning("Aucune adresse e-mail configurée dans les paramètres.")
-            else:
+            if db_emails:
                 email_list = [e['email'] for e in db_emails]
-                selected_emails = st.multiselect("Sélectionner les destinataires :", options=email_list, default=email_list)
-                
-                if st.button("📤 Envoyer le rapport par email", use_container_width=True):
-                    if not selected_emails:
-                        st.error("Veuillez choisir au moins un destinataire.")
-                    else:
-                        with st.spinner("Envoi de l'e-mail en cours..."):
-                            success, msg = send_email_with_pdf(
-                                pdf_bytes, audit_title, idp, auditeur, zone, 
-                                equipe, semaine, annee, taux, nb_ok, nb_nok, total_questions, selected_emails
-                            )
-                            if success:
-                                st.success(msg)
-                            else:
-                                st.error(msg)
+                selected_emails = st.multiselect("Destinataires :", options=email_list, default=email_list)
+                if st.button("📤 Envoyer le rapport", use_container_width=True):
+                    success, msg = send_email_with_pdf(pdf_bytes, audit_title, idp, auditeur, zone, equipe, semaine, annee, taux, nb_ok, nb_nok, total_questions, selected_emails)
+                    if success: st.success(msg)
+                    else: st.error(msg)
 
         st.markdown("---")
         if st.button("🔄 Démarrer un nouvel audit", use_container_width=True):
