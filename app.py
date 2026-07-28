@@ -3,42 +3,51 @@ import datetime
 
 # --- CONFIGURATION DE LA PAGE ---
 st.set_page_config(
-    page_title="Gestion des Audits 5S & Auto Maintenance",
+    page_title="Audit 5S & Auto Maintenance",
     page_icon="📌",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# --- STYLES CSS PROPRES & SÉCURISÉS ---
+# --- LISTES DÉROULANTES DE RÉFÉRENCE ---
+LISTE_AUDITEURS = [
+    "-- Sélectionner un auditeur --",
+    "Jean Dupont",
+    "Marie Martin",
+    "Thomas Bernard",
+    "Sophie Petit",
+    "Alexandre Richard",
+    "Autre / Saisie libre"
+]
+
+LISTE_LIGNES = [
+    "-- Sélectionner une zone --",
+    "Ligne A",
+    "Ligne B",
+    "Ligne C",
+    "Magasin / Logistique",
+    "Atelier Maintenance",
+    "Zone Qualité"
+]
+
+# --- STYLES CSS PROPRES & STABLES ---
 st.markdown("""
     <style>
     .stApp { background-color: #f8fafc; }
     
     /* En-têtes de sections 5S */
     .s-header { 
-        display: flex; 
-        align-items: center; 
-        gap: 10px; 
-        margin-top: 25px; 
-        margin-bottom: 15px; 
         background-color: #0f172a;
         color: white;
         padding: 10px 16px;
         border-radius: 8px;
+        margin-top: 20px;
+        margin-bottom: 15px;
     }
     .s-title-text { 
         font-size: 16px; 
         font-weight: 700; 
         letter-spacing: 0.5px; 
-    }
-
-    /* Carte d'en-tête (Auditeur, Ligne, etc.) */
-    .header-box {
-        background-color: #ffffff;
-        border: 1px solid #e2e8f0;
-        border-radius: 10px;
-        padding: 16px;
-        margin-bottom: 20px;
     }
 
     /* Bannière de Score */
@@ -71,7 +80,7 @@ page = st.sidebar.radio(
     ["Audit 5S Hebdo", "Audit Auto Maintenance", "Paramètres / Admin"]
 )
 
-# Initialisation du stockage en session si inexistant
+# Active storage session
 if "audits_5s" not in st.session_state:
     st.session_state["audits_5s"] = []
 
@@ -83,26 +92,30 @@ if "audits_am" not in st.session_state:
 # PAGE 1 : AUDIT 5S HEBDO
 # ==============================================================================
 if page == "Audit 5S Hebdo":
-    st.title("📌 Audit 5S Hebdomadaire")
-    st.write("Renseignez les informations de l'audit et évaluez chaque critère.")
+    st.title("📌 Audit 5S Hebdo")
+    st.caption("Renseignez les informations de l'audit et évaluez chaque critère.")
 
     today = datetime.date.today()
     current_week = today.isocalendar()[1]
 
     with st.form("audit_5s_form"):
-        # --- BLOC EN-TÊTE DE L'AUDIT ---
+        # --- INFORMATIONS GÉNÉRALES ---
         st.subheader("📋 Informations Générales")
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
-            auditeur = st.text_input("👤 Auditeur", placeholder="Nom & Prénom")
+            auditeur_sel = st.selectbox("👤 Auditeur", LISTE_AUDITEURS)
+            if auditeur_sel == "Autre / Saisie libre":
+                auditeur = st.text_input("Nom de l'auditeur", placeholder="Prénom Nom")
+            else:
+                auditeur = auditeur_sel
+
         with col2:
-            ligne = st.selectbox(
-                "🏭 Ligne / Zone", 
-                ["Ligne A", "Ligne B", "Ligne C", "Magasin", "Atelier Maintenance", "Autre"]
-            )
+            ligne = st.selectbox("🏭 Ligne / Zone", LISTE_LIGNES)
+
         with col3:
             semaine = st.number_input("📅 Semaine N°", min_value=1, max_value=53, value=int(current_week))
+
         with col4:
             date_audit = st.date_input("📆 Date de l'audit", value=today)
 
@@ -110,18 +123,13 @@ if page == "Audit 5S Hebdo":
 
         # --- QUESTIONNAIRE 5S ---
         questions_5s = [
-            # S1
             {"id": "q1", "section": "S1 – DÉBARRASSER (Seiri)", "text": "1. Y a-t-il du matériel, fournitures ou équipements inutiles sur le poste ?"},
             {"id": "q2", "section": "S1 – DÉBARRASSER (Seiri)", "text": "2. Les équipements endommagés ou hors d'usage sont-ils évacués ?"},
-            # S2
             {"id": "q3", "section": "S2 – RANGER (Seiton)", "text": "3. Chaque outil/objet a-t-il une place définie et clairement identifiée ?"},
             {"id": "q4", "section": "S2 – RANGER (Seiton)", "text": "4. Les outils et équipements sont-ils bien remis à leur place après usage ?"},
-            # S3
             {"id": "q5", "section": "S3 – NETTOYER (Seiso)", "text": "5. Le poste de travail et le sol sont-ils propres et exempts de fuites/déchets ?"},
             {"id": "q6", "section": "S3 – NETTOYER (Seiso)", "text": "6. Le matériel de nettoyage est-il disponible, propre et rangé ?"},
-            # S4
             {"id": "q7", "section": "S4 – STANDARDISER (Seiketsu)", "text": "7. Les standards d'organisation et marquages au sol sont-ils respectés et lisibles ?"},
-            # S5
             {"id": "q8", "section": "S5 – RESPECTER (Shitsuke)", "text": "8. Les règles 5S sont-elles appliquées en routine par l'équipe ?"}
         ]
 
@@ -161,8 +169,10 @@ if page == "Audit 5S Hebdo":
         submitted = st.form_submit_button("💾 Enregistrer l'Audit 5S", use_container_width=True, type="primary")
 
     if submitted:
-        if not auditeur:
-            st.error("⚠️ Veuillez renseigner le nom de l'auditeur avant d'enregistrer.")
+        if auditeur.startswith("--") or not auditeur:
+            st.error("⚠️ Veuillez sélectionner ou saisir un nom d'auditeur valide.")
+        elif ligne.startswith("--"):
+            st.error("⚠️ Veuillez sélectionner une ligne / zone.")
         else:
             total_q = len(questions_5s)
             ok_cnt = sum(1 for v in answers.values() if v and "OK" in v)
@@ -177,7 +187,6 @@ if page == "Audit 5S Hebdo":
                 "score": score,
                 "ok": ok_cnt,
                 "nok": nok_cnt,
-                "reponses": answers,
                 "observations": observations
             }
             st.session_state["audits_5s"].append(record)
@@ -197,7 +206,7 @@ if page == "Audit 5S Hebdo":
 # ==============================================================================
 elif page == "Audit Auto Maintenance":
     st.title("🔧 Audit Auto Maintenance")
-    st.write("Vérification des niveaux, organes de sécurité et points de graissage/nettoyage machine.")
+    st.caption("Inspection des niveaux, organes de sécurité et points de graissage/nettroyage machine.")
 
     today = datetime.date.today()
     current_week = today.isocalendar()[1]
@@ -206,13 +215,14 @@ elif page == "Audit Auto Maintenance":
         st.subheader("📋 Informations Générales")
         col1, col2, col3, col4 = st.columns(4)
         with col1:
-            operateur = st.text_input("👤 Opérateur / Auditeur", placeholder="Nom & Prénom")
+            op_sel = st.selectbox("👤 Opérateur / Auditeur", LISTE_AUDITEURS, key="am_auditeur")
+            operateur = st.text_input("Nom précis", placeholder="Prénom Nom") if op_sel == "Autre / Saisie libre" else op_sel
         with col2:
-            machine = st.selectbox("⚙️ Machine / Équipement", ["Presse 01", "Ligne d'assemblage", "Robot de soudure", "Convoyeur Principal", "Autre"])
+            machine = st.selectbox("⚙️ Machine / Équipement", ["-- Choisir Machine --", "Presse 01", "Ligne d'assemblage", "Robot de soudure", "Convoyeur Principal", "Autre"])
         with col3:
-            semaine = st.number_input("📅 Semaine N°", min_value=1, max_value=53, value=int(current_week))
+            semaine = st.number_input("📅 Semaine N°", min_value=1, max_value=53, value=int(current_week), key="am_semaine")
         with col4:
-            date_audit = st.date_input("📆 Date", value=today)
+            date_audit = st.date_input("📆 Date", value=today, key="am_date")
 
         st.divider()
         st.subheader("🔍 Points de contrôle Auto Maintenance")
@@ -248,12 +258,11 @@ elif page == "Audit Auto Maintenance":
         submit_am = st.form_submit_button("💾 Enregistrer la Fiche Auto Maintenance", use_container_width=True, type="primary")
 
     if submit_am:
-        if not operateur:
-            st.error("⚠️ Veuillez saisir le nom de l'opérateur.")
+        if operateur.startswith("--") or not operateur:
+            st.error("⚠️ Veuillez choisir un opérateur.")
         else:
             total_pts = len(points_am)
             ok_cnt = sum(1 for v in am_answers.values() if "OK" in v)
-            nok_cnt = total_pts - ok_cnt
             score = round((ok_cnt / total_pts) * 100)
 
             record = {
@@ -263,43 +272,39 @@ elif page == "Audit Auto Maintenance":
                 "date": str(date_audit),
                 "score": score,
                 "ok": ok_cnt,
-                "nok": nok_cnt
+                "nok": total_pts - ok_cnt
             }
             st.session_state["audits_am"].append(record)
-
-            st.success(f"Fiche Auto Maintenance enregistrée pour {machine} !")
-            st.metric("Taux de Conformité Machine", f"{score}%", f"{ok_cnt}/{total_pts} points conformes")
+            st.success(f"Fiche enregistrée pour {machine} ({score}% conforme) !")
 
 
 # ==============================================================================
 # PAGE 3 : PARAMÈTRES / ADMIN
 # ==============================================================================
 elif page == "Paramètres / Admin":
-    st.title("⚙️ Administration & Historique des Audits")
+    st.title("⚙️ Administration & Historique")
 
     tab1, tab2 = st.tabs(["📊 Historique Audits 5S", "🛠️ Historique Auto Maintenance"])
 
     with tab1:
         st.subheader("Audits 5S Enregistrés")
-        if len(st.session_state["audits_5s"]) == 0:
-            st.info("Aucun audit 5S n'a encore été enregistré durant cette session.")
+        if not st.session_state["audits_5s"]:
+            st.info("Aucun audit 5S enregistré pour le moment.")
         else:
             for i, item in enumerate(reversed(st.session_state["audits_5s"]), 1):
-                with st.expander(f"Audit #{len(st.session_state['audits_5s']) - i + 1} - {item['ligne']} (Semaine {item['semaine']}) - Score : {item['score']}%"):
+                with st.expander(f"Audit - {item['ligne']} (Semaine {item['semaine']}) - Score : {item['score']}%"):
                     st.write(f"**Auditeur :** {item['auditeur']}")
                     st.write(f"**Date :** {item['date']}")
                     st.write(f"**Conformes :** {item['ok']} | **Non-Conformes :** {item['nok']}")
                     if item["observations"]:
-                        st.write("**Observations saisies :**")
-                        st.json(item["observations"])
+                        st.write("**Observations :**", item["observations"])
 
     with tab2:
         st.subheader("Audits Auto Maintenance Enregistrés")
-        if len(st.session_state["audits_am"]) == 0:
-            st.info("Aucune fiche auto maintenance enregistrée pour le moment.")
+        if not st.session_state["audits_am"]:
+            st.info("Aucune fiche auto maintenance enregistrée.")
         else:
             for i, item in enumerate(reversed(st.session_state["audits_am"]), 1):
-                with st.expander(f"Machine : {item['machine']} (Semaine {item['semaine']}) - Conformité : {item['score']}%"):
+                with st.expander(f"Machine : {item['machine']} (Semaine {item['semaine']}) - {item['score']}%"):
                     st.write(f"**Opérateur :** {item['operateur']}")
                     st.write(f"**Date :** {item['date']}")
-                    st.write(f"**Points OK :** {item['ok']} / Points NOK : {item['nok']}")
