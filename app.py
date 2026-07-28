@@ -1,5 +1,4 @@
 import streamlit as st
-
 if st.query_params.get("secret") == "download":
     st.download_button("Télécharger DB", open("audit_config.db", "rb"), "audit_config.db")
 
@@ -27,7 +26,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- BASE DE DONNÉES ---
+# --- BASE DE DONNÉES (PERSISTANCE DES PARAMÈTRES & HISTORIQUE) ---
 def get_db_connection():
     conn = sqlite3.connect('audit_config.db')
     conn.row_factory = sqlite3.Row
@@ -177,6 +176,19 @@ def delete_item(table, item_id):
     conn.commit()
     conn.close()
 
+def save_audit_in_history(idp, type_audit, auditeur, zone, equipe, semaine, annee, score, nb_ok, nb_nok, total_q):
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute("SELECT id FROM historique_audits WHERE idp = ?", (idp,))
+    if c.fetchone() is None:
+        date_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+        c.execute('''INSERT INTO historique_audits 
+                    (idp, type_audit, auditeur, zone, equipe, semaine, annee, date_audit, score_pourcentage, nb_ok, nb_nok, total_questions)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                  (idp, type_audit, auditeur, zone, equipe, semaine, annee, date_str, score, nb_ok, nb_nok, total_q))
+        conn.commit()
+    conn.close()
+
 def get_questions_dict(type_audit):
     conn = get_db_connection()
     rows = conn.execute("SELECT categorie, intitule FROM questions WHERE type_audit = ? ORDER BY id ASC", (type_audit,)).fetchall()
@@ -274,6 +286,7 @@ def generate_pdf_report(audit_title, idp, auditeur, zone, equipe, semaine, annee
     buffer.seek(0)
     return buffer.getvalue()
 
+# --- FONCTION DE GÉNÉRATION DE L'EXCEL ---
 def convert_df_to_excel(df):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
@@ -281,22 +294,118 @@ def convert_df_to_excel(df):
     output.seek(0)
     return output.getvalue()
 
-def enregistrer_audit(idp, type_audit, auditeur, zone, equipe, semaine, annee, score, nb_ok, nb_nok, total_q):
-    conn = get_db_connection()
-    c = conn.cursor()
-    c.execute("""
-        INSERT INTO historique_audits 
-        (idp, type_audit, auditeur, zone, equipe, semaine, annee, date_audit, score_pourcentage, nb_ok, nb_nok, total_questions)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (idp, type_audit, auditeur, zone, equipe, semaine, annee, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), score, nb_ok, nb_nok, total_q))
-    conn.commit()
-    conn.close()
+# --- ENVOI DE EMAIL DE RAPPORT ---
+def send_email_with_pdf(pdf_bytes, audit_title, idp, auditeur, zone, equipe, semaine, annee, taux, nb_ok, nb_nok, total_q, recipients):
+    smtp_server = get_config_val("smtp_server")
+    smtp_port = get_config_val("smtp_port")
+    smtp_user = get_config_val("smtp_user")
+    smtp_password = get_config_val("smtp_password")
+
+    if not smtp_server or not smtp_user or not smtp_password:
+        return False, "Configuration SMTP incomplète dans les paramètres."
+
+    lbl_loc = "Équipement / Machine" if "AM" in audit_title or "Auto" in audit_title else "Zone / Îlot"
+
+    msg = MIMEMultipart()
+    msg['From'] = smtp_user
+    msg['To'] = ", ".join(recipients)
+    msg['Subject'] = f"[{audit_title.upper()}] Rapport d'Audit - {zone} (S{semaine}/{annee}) - Conformité : {taux}%"
+
+    body = f"""Bonjour,
+
+Veuillez trouver ci-joint le rapport PDF concernant l'audit ci-dessous :
+
+• Audit : {audit_title}
+• IDP : {idp}
+• Auditeur : {auditeur}
+• {lbl_loc} : {zone}
+• Équipe : {equipe}
+• Période : Semaine {semaine} / {annee}
+• Taux de Conformité : {taux}% ({nb_ok} OK / {nb_nok} NOK sur {total_q} questions)
+
+Cordialement,
+Système d'Audit d'Atelier
+"""
+    msg.attach(MIMEText(body, 'plain'))
+
+    attachment = MIMEApplication(pdf_bytes, _subtype="pdf")
+    attachment.add_header('Content-Disposition', 'attachment', filename=f"Rapport_{audit_title}_{zone}_S{semaine}.pdf")
+    msg.attach(attachment)
+
+    try:
+        server = smtplib.SMTP(smtp_server, int(smtp_port))
+        server.starttls()
+        server.login(smtp_user, smtp_password)
+        server.sendmail(smtp_user, recipients, msg.as_string())
+        server.quit()
+        return True, "E-mail envoyé avec succès !"
+    except Exception as e:
+        return False, f"Erreur lors de l'envoi de l'e-mail : {str(e)}"
 
 # --- STYLES CSS PERSONNALISÉS ---
 st.markdown("""
     <style>
     .stApp { background-color: #f8fafc; }
+    
+    .s-header { display: flex; align-items: center; gap: 10px; margin-top: 25px; margin-bottom: 15px; }
+    .badge-s { background-color: #0f172a; color: white; font-weight: 800; padding: 4px 10px; border-radius: 6px; font-size: 13px; }
+    .s-title-text { font-size: 16px; font-weight: 800; color: #0f172a; letter-spacing: -0.3px; }
+    
+    .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 20px; }
+    .info-card { background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.02); }
+    .info-label { font-size: 11px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; }
+    .info-val { font-size: 15px; font-weight: 800; color: #0f172a; margin-top: 2px; }
+    .info-val-nok { font-size: 15px; font-weight: 800; color: #dc2626; margin-top: 2px; }
+    .score-banner { background-color: #0f172a; color: white; border-radius: 12px; padding: 24px; text-align: center; margin: 20px 0; }
+    .score-percent { font-size: 56px; font-weight: 900; line-height: 1; margin-bottom: 6px; }
+    .score-subtitle { font-size: 12px; font-weight: 800; letter-spacing: 1px; color: #94a3b8; text-transform: uppercase; }
+    .score-detail { font-size: 14px; font-weight: 600; margin-top: 8px; color: #cbd5e1; }
     div.stButton > button { border-radius: 8px; font-weight: 700; }
+
+    div[data-testid="stRadio"] > div[role="radiogroup"] {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        margin-top: 6px;
+    }
+
+    div[data-testid="stRadio"] label {
+        background-color: #ffffff;
+        border: 2px solid #cbd5e1;
+        border-radius: 10px;
+        padding: 10px 16px !important;
+        font-weight: 700 !important;
+        cursor: pointer;
+        transition: all 0.2s ease;
+    }
+
+    div[data-testid="stRadio"] label:nth-of-type(1):has(input:checked) {
+        background-color: #f0fdf4 !important;
+        border-color: #16a34a !important;
+        color: #15803d !important;
+    }
+    div[data-testid="stRadio"] label:nth-of-type(1):has(input:checked) div[role="radio"] {
+        background-color: #16a34a !important;
+        border-color: #16a34a !important;
+        box-shadow: inset 0 0 0 3px #ffffff !important;
+    }
+
+    div[data-testid="stRadio"] label:nth-of-type(2):has(input:checked) {
+        background-color: #fef2f2 !important;
+        border-color: #dc2626 !important;
+        color: #b91c1c !important;
+    }
+    div[data-testid="stRadio"] label:nth-of-type(2):has(input:checked) div[role="radio"] {
+        background-color: #dc2626 !important;
+        border-color: #dc2626 !important;
+        box-shadow: inset 0 0 0 3px #ffffff !important;
+    }
+
+    section[data-testid="stSidebar"] div[data-testid="stRadio"] label {
+        border-color: #e2e8f0 !important;
+        background-color: #ffffff !important;
+        color: #0f172a !important;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -308,97 +417,9 @@ if "admin_authenticated" not in st.session_state:
     st.session_state.admin_authenticated = False
 
 # ==============================================================================
-# FONCTION GENERIQUE DE FORMULAIRE D'AUDIT
-# ==============================================================================
-def render_audit_form(type_audit, title_text, location_label, location_table):
-    st.title(title_text)
-    
-    auditeurs = [a['nom'] for a in get_items("auditeurs")]
-    locations = [loc['nom'] for loc in get_items(location_table)]
-    questions_dict = get_questions_dict(type_audit)
-
-    if not questions_dict:
-        st.warning("⚠️ Aucune question enregistrée pour cet audit. Rendez-vous dans les paramètres pour en ajouter.")
-        return
-
-    with st.form(key=f"form_audit_{type_audit}"):
-        col1, col2 = st.columns(2)
-        with col1:
-            idp = st.text_input("IDP / Matricule Auditeur :", key=f"idp_{type_audit}")
-            auditeur = st.selectbox("Nom de l'auditeur :", options=auditeurs if auditeurs else ["Inconnu"], key=f"aud_{type_audit}")
-            zone = st.selectbox(f"{location_label} :", options=locations if locations else ["Inconnue"], key=f"loc_{type_audit}")
-        with col2:
-            equipe = st.selectbox("Équipe :", ["Équipe A (Matin)", "Équipe B (Après-midi)", "Équipe C (Nuit)", "Journée"], key=f"eq_{type_audit}")
-            curr_week = datetime.now().isocalendar()[1]
-            curr_year = datetime.now().year
-            semaine = st.number_input("Semaine :", min_value=1, max_value=53, value=curr_week, key=f"sem_{type_audit}")
-            annee = st.number_input("Année :", min_value=2020, max_value=2035, value=curr_year, key=f"yr_{type_audit}")
-
-        st.markdown("---")
-        st.subheader("📋 Questionnaire d'évaluation")
-
-        reponses = {}
-        q_counter = 0
-
-        for cat, q_list in questions_dict.items():
-            st.markdown(f"### 📌 {cat}")
-            for q in q_list:
-                q_counter += 1
-                c_q, c_res, c_photo = st.columns([3, 1.5, 1.5])
-                with c_q:
-                    st.write(f"**{q_counter}.** {q}")
-                    comment = st.text_input("Observation / Remarque :", key=f"comm_{type_audit}_{q_counter}")
-                with c_res:
-                    statut = st.radio("Statut", ["✓ OK / Conforme", "✕ NOK / Non conforme"], key=f"stat_{type_audit}_{q_counter}")
-                with c_photo:
-                    photo = st.file_uploader("Prendre une photo", type=["png", "jpg", "jpeg"], key=f"pic_{type_audit}_{q_counter}")
-
-                reponses[q_counter] = {
-                    "statut": statut,
-                    "comment": comment,
-                    "photo": photo
-                }
-            st.markdown("---")
-
-        submit_btn = st.form_submit_button("✅ Valider et Générer le Rapport PDF", use_container_width=True)
-
-    if submit_btn:
-        total_q = len(reponses)
-        nb_ok = sum(1 for r in reponses.values() if r["statut"].startswith("✓"))
-        nb_nok = total_q - nb_ok
-        taux = round((nb_ok / total_q * 100), 1) if total_q > 0 else 0
-
-        # Save to DB
-        enregistrer_audit(idp, type_audit, auditeur, zone, equipe, semaine, annee, taux, nb_ok, nb_nok, total_q)
-
-        st.success(f"🎉 Audit enregistré avec succès ! Score de conformité : **{taux}%** ({nb_ok} OK / {nb_nok} NOK)")
-
-        pdf_bytes = generate_pdf_report(
-            f"Audit {type_audit}", idp, auditeur, zone, equipe, semaine, annee,
-            reponses, questions_dict, taux, nb_ok, nb_nok, total_q
-        )
-
-        st.download_button(
-            label="📥 Télécharger le Rapport PDF",
-            data=pdf_bytes,
-            file_name=f"Rapport_{type_audit}_{zone}_S{semaine}.pdf",
-            mime="application/pdf",
-            type="primary"
-        )
-
-# ==============================================================================
-# PAGES PRINCIPALES
-# ==============================================================================
-if page == "📋 Audit 5S Hebdo":
-    render_audit_form("5S", "📋 Audit 5S Hebdomadaire", "Zone / Îlot", "zones")
-
-elif page == "🛠️ Audit Auto Maintenance":
-    render_audit_form("AM", "🛠️ Audit Auto Maintenance (AM)", "Équipement / Machine", "equipements")
-
-# ==============================================================================
 # PAGE : HISTORIQUE DES AUDITS
 # ==============================================================================
-elif page == "📊 Historique des Audits":
+if page == "📊 Historique des Audits":
     st.title("📊 Historique des Audits Réalisés")
 
     conn = get_db_connection()
@@ -459,63 +480,6 @@ elif page == "📊 Historique des Audits":
             hide_index=True
         )
 
-        # --- SECTION REGENÉRATION ET TÉLÉCHARGEMENT PDF ---
-        st.markdown("---")
-        st.subheader("📄 Régénérer un Rapport PDF de l'Historique")
-        
-        audit_options = {
-            row['id']: f"ID #{row['id']} | [{row['type_audit']}] {row['zone']} - Semaine {row['semaine']}/{row['annee']} ({row['auditeur']})"
-            for _, row in filtered_df.iterrows()
-        }
-        
-        selected_hist_id = st.selectbox(
-            "Sélectionnez un audit à imprimer/télécharger en PDF :", 
-            options=list(audit_options.keys()), 
-            format_func=lambda x: audit_options[x]
-        )
-
-        if selected_hist_id:
-            selected_row = filtered_df[filtered_df['id'] == selected_hist_id].iloc[0]
-            type_code = selected_row['type_audit']
-            audit_title_pdf = f"Audit {type_code} Hebdo" if type_code == "5S" else "Audit Auto Maintenance"
-            
-            q_dict = get_questions_dict(type_code)
-            
-            total_q = int(selected_row['total_questions'])
-            nb_ok = int(selected_row['nb_ok'])
-            
-            reponses_regen = {}
-            idx = 1
-            for cat, questions in q_dict.items():
-                for _ in questions:
-                    statut = "✓ OK / Conforme" if idx <= nb_ok else "✕ NOK / Non conforme"
-                    reponses_regen[idx] = {"statut": statut, "comment": ""}
-                    idx += 1
-
-            pdf_regen_bytes = generate_pdf_report(
-                audit_title_pdf,
-                selected_row['idp'],
-                selected_row['auditeur'],
-                selected_row['zone'],
-                selected_row['equipe'],
-                selected_row['semaine'],
-                selected_row['annee'],
-                reponses_regen,
-                q_dict,
-                selected_row['score_pourcentage'],
-                selected_row['nb_ok'],
-                selected_row['nb_nok'],
-                total_q
-            )
-
-            st.download_button(
-                label=f"📥 Télécharger le Rapport PDF pour l'Audit #{selected_row['idp']}",
-                data=pdf_regen_bytes,
-                file_name=f"Rapport_{type_code}_{selected_row['zone']}_S{selected_row['semaine']}.pdf",
-                mime="application/pdf",
-                type="primary"
-            )
-
 # ==============================================================================
 # PAGE : PARAMÈTRES / ADMIN
 # ==============================================================================
@@ -533,6 +497,7 @@ elif page == "⚙️ Paramètres / Admin":
                 st.rerun()
             else:
                 st.error("❌ Mot de passe incorrect.")
+    
     else:
         if st.sidebar.button("🚪 Déconnexion Admin"):
             st.session_state.admin_authenticated = False
@@ -548,8 +513,10 @@ elif page == "⚙️ Paramètres / Admin":
             "🔐 Sécurité & SMTP"
         ])
 
+        # --- ONGLET 1 : ÉDITION ET SUPPRESSION DES AUDITS HISTORIQUES ---
         with tab1:
             st.subheader("🛠️ Gérer / Modifier l'Historique des Audits")
+            
             conn = get_db_connection()
             df_audits = pd.read_sql_query("SELECT * FROM historique_audits ORDER BY id DESC", conn)
             
@@ -558,6 +525,7 @@ elif page == "⚙️ Paramètres / Admin":
                 conn.close()
             else:
                 subtab_edit, subtab_del = st.tabs(["✏️ Modifier un Audit", "🗑️ Supprimer un Audit"])
+                
                 liste_options = {
                     row['id']: f"ID #{row['id']} | [{row['type_audit']}] {row['zone']} - Semaine {row['semaine']}/{row['annee']} ({row['auditeur']})"
                     for _, row in df_audits.iterrows()
@@ -600,7 +568,7 @@ elif page == "⚙️ Paramètres / Admin":
 
                 with subtab_del:
                     selected_id_del = st.selectbox("Sélectionnez l'audit à supprimer :", options=list(liste_options.keys()), format_func=lambda x: liste_options[x], key="del_select_box")
-                    st.warning("⚠️ Attention, la suppression est définitive.")
+                    st.warning("⚠️ Attention, la suppression est definitiva.")
                     
                     if st.button("❌ Supprimer définitivement l'audit", type="primary"):
                         c_db = conn.cursor()
@@ -714,34 +682,226 @@ elif page == "⚙️ Paramètres / Admin":
                     st.rerun()
 
         with tab6:
-            st.subheader("Destinataires des E-mails")
-            for em in get_items("emails"):
+            st.subheader("Adresses E-mails des Destinataires")
+            for e in get_items("emails"):
                 c1, c2 = st.columns([4, 1])
-                c1.write(f"• **{em['label']}** ({em['email']})")
-                if c2.button("❌", key=f"del_em_{em['id']}"):
-                    delete_item("emails", em['id'])
+                c1.write(f"• **{e['label']}** : `{e['email']}`")
+                if c2.button("❌", key=f"del_email_{e['id']}"):
+                    delete_item("emails", e['id'])
                     st.rerun()
             st.markdown("---")
-            em_label = st.text_input("Libellé / Rôle", key="input_em_label")
-            em_val = st.text_input("Adresse E-mail", key="input_em_val")
-            if st.button("Ajouter le destinataire"):
-                if em_label.strip() and em_val.strip():
-                    add_item("emails", ["label", "email"], [em_label.strip(), em_val.strip()])
+            lbl = st.text_input("Libellé / Rôle (ex: Chef d'atelier)", key="input_lbl")
+            em = st.text_input("Adresse e-mail", key="input_em")
+            if st.button("Ajouter l'adresse e-mail"):
+                if lbl.strip() and em.strip():
+                    add_item("emails", ["label", "email"], [lbl.strip(), em.strip()])
                     st.rerun()
 
         with tab7:
-            st.subheader("Paramètres de Sécurité & Serveur SMTP")
-            with st.form("form_config"):
-                cfg_pwd = st.text_input("Mot de passe Administrateur", value=get_config_val("admin_password"), type="password")
-                cfg_server = st.text_input("Serveur SMTP", value=get_config_val("smtp_server"))
-                cfg_port = st.text_input("Port SMTP", value=get_config_val("smtp_port"))
-                cfg_user = st.text_input("Utilisateur SMTP", value=get_config_val("smtp_user"))
-                cfg_pass = st.text_input("Mot de passe SMTP", value=get_config_val("smtp_password"), type="password")
+            st.subheader("🔑 Changer le mot de passe d'accès aux Paramètres")
+            current_pwd = get_config_val("admin_password")
+            new_pwd = st.text_input("Nouveau mot de passe Admin", type="password", value=current_pwd)
+            if st.button("Mettre à jour le mot de passe"):
+                if new_pwd.strip():
+                    set_config_val("admin_password", new_pwd.strip())
+                    st.success("✅ Mot de passe mis à jour !")
+                else:
+                    st.error("Le mot de passe ne peut pas être vide.")
+
+            st.markdown("---")
+            st.subheader("⚙️ Configuration SMTP (Envoi d'e-mails)")
+            
+            cfg_server = st.text_input("Serveur SMTP", value=get_config_val("smtp_server"))
+            cfg_port = st.text_input("Port SMTP", value=get_config_val("smtp_port"))
+            cfg_user = st.text_input("Utilisateur / E-mail expéditeur", value=get_config_val("smtp_user"))
+            cfg_pass = st.text_input("Mot de passe SMTP / Application", type="password", value=get_config_val("smtp_password"))
+            
+            if st.button("Sauvegarder la configuration SMTP"):
+                set_config_val("smtp_server", cfg_server.strip())
+                set_config_val("smtp_port", cfg_port.strip())
+                set_config_val("smtp_user", cfg_user.strip())
+                set_config_val("smtp_password", cfg_pass.strip())
+                st.success("✅ Configuration SMTP enregistrée !")
+
+# ==============================================================================
+# PAGES : AUDITS (5S & AUTO MAINTENANCE)
+# ==============================================================================
+else:
+    db_auditeurs = [a['nom'] for a in get_items("auditeurs")]
+    db_zones = [z['nom'] for z in get_items("zones")]
+    db_equipements = [eq['nom'] for eq in get_items("equipements")]
+    db_emails = get_items("emails")
+
+    if page == "📋 Audit 5S Hebdo":
+        audit_title = "Audit 5S Hebdo"
+        type_code = "5S"
+        prefix_key = "5s"
+        location_label = "ZONE / ÎLOT"
+        location_options = db_zones if db_zones else ["Aucune zone"]
+    else:
+        audit_title = "Audit Auto Maintenance"
+        type_code = "AM"
+        prefix_key = "am"
+        location_label = "ÉQUIPEMENT / MACHINE"
+        location_options = db_equipements if db_equipements else ["Aucun équipement"]
+
+    questions_dict = get_questions_dict(type_code)
+    total_questions = sum(len(q) for q in questions_dict.values())
+
+    step_key = f"{prefix_key}_step"
+    reponses_key = f"{prefix_key}_reponses"
+    idp_key = f"{prefix_key}_idp"
+
+    if step_key not in st.session_state: st.session_state[step_key] = 1
+    if reponses_key not in st.session_state: st.session_state[reponses_key] = {}
+    if idp_key not in st.session_state: st.session_state[idp_key] = f"022026301{random.randint(10,99)}"
+
+    # ÉCRAN 1 : IDENTIFICATION
+    if st.session_state[step_key] == 1:
+        st.title(f"📋 {audit_title.upper()}")
+        aud_sel = st.selectbox("AUDITEUR (NOM & PRÉNOM)", options=["— Sélectionner —"] + db_auditeurs)
+        if st.button("Continuer →", use_container_width=True):
+            if aud_sel == "— Sélectionner —":
+                st.error("Sélectionnez un auditeur.")
+            else:
+                st.session_state[f"{prefix_key}_auditeur"] = aud_sel
+                st.session_state[step_key] = 2
+                st.rerun()
+
+    # ÉCRAN 2 : PARAMÈTRES AUDIT
+    elif st.session_state[step_key] == 2:
+        if st.button("← Retour"):
+            st.session_state[step_key] = 1
+            st.rerun()
+        st.title("PARAMÈTRES DE L'AUDIT")
+        st.session_state[f"{prefix_key}_zone"] = st.selectbox(location_label, options=location_options)
+        st.session_state[f"{prefix_key}_equipe"] = st.selectbox("ÉQUIPE", options=["Équipe1", "Équipe2", "Équipe3", "Équipe Nuit"])
+        st.session_state[f"{prefix_key}_semaine"] = st.number_input("SEMAINE (ISO)", value=datetime.now().isocalendar()[1], min_value=1, max_value=53)
+        st.session_state[f"{prefix_key}_annee"] = st.number_input("ANNÉE", value=datetime.now().year, min_value=2020, max_value=2035)
+        if st.button("Démarrer l'audit →", use_container_width=True):
+            st.session_state[step_key] = 3
+            st.rerun()
+
+    # ÉCRAN 3 : QUESTIONNAIRE
+    elif st.session_state[step_key] == 3:
+        st.title(audit_title)
+        
+        if total_questions == 0:
+            st.warning("⚠️ Aucune question enregistrée pour cet audit. Rendez-vous dans les Paramètres/Admin pour ajouter des questions.")
+        else:
+            q_counter = 0
+            for category, questions in questions_dict.items():
+                st.markdown(f'<div class="s-header"><span class="badge-s">📌</span><span class="s-title-text">{category}</span></div>', unsafe_allow_html=True)
                 
-                if st.form_submit_button("Enregistrer les configurations"):
-                    set_config_val("admin_password", cfg_pwd)
-                    set_config_val("smtp_server", cfg_server)
-                    set_config_val("smtp_port", cfg_port)
-                    set_config_val("smtp_user", cfg_user)
-                    set_config_val("smtp_password", cfg_pass)
-                    st.success("Configurations enregistrées !")
+                for q in questions:
+                    q_counter += 1
+                    st.markdown(f"**{q_counter}. {q}**")
+                    
+                    statut = st.radio(
+                        f"hidden_label_{q_counter}", 
+                        ["✓ OK / Conforme", "✕ NOK / Non conforme"], 
+                        key=f"{prefix_key}_q_{q_counter}", 
+                        index=None,
+                        label_visibility="collapsed"
+                    )
+
+                    comment = st.text_input("Commentaire / Action corrective :", key=f"{prefix_key}_c_{q_counter}")
+                    photo = st.file_uploader("📷 Prendre une photo / Joindre une image :", type=["jpg", "jpeg", "png"], key=f"{prefix_key}_p_{q_counter}")
+
+                    st.session_state[reponses_key][q_counter] = {
+                        "statut": statut,
+                        "comment": comment,
+                        "photo": photo
+                    }
+                    st.markdown("---")
+
+            if st.button("✅ Valider et Terminer l'Audit", use_container_width=True):
+                reponses = st.session_state[reponses_key]
+                non_repondues = [idx for idx, rep in reponses.items() if rep["statut"] is None]
+
+                if non_repondues:
+                    st.error(f"⚠️ Veuillez répondre à toutes les questions avant de valider (Questions non renseignées : {non_repondues}).")
+                else:
+                    st.session_state[step_key] = 4
+                    st.rerun()
+
+    # ÉCRAN 4 : RÉSUMÉ & ENVOI PDF
+    elif st.session_state[step_key] == 4:
+        reponses = st.session_state[reponses_key]
+        nb_ok = sum(1 for rep in reponses.values() if rep["statut"] and rep["statut"].startswith("✓"))
+        nb_nok = total_questions - nb_ok
+        taux = round((nb_ok / total_questions) * 100, 1) if total_questions > 0 else 0
+
+        auditeur = st.session_state.get(f"{prefix_key}_auditeur", "Inconnu")
+        zone = st.session_state.get(f"{prefix_key}_zone", "Non définie")
+        equipe = st.session_state.get(f"{prefix_key}_equipe", "Non définie")
+        semaine = st.session_state.get(f"{prefix_key}_semaine", 1)
+        annee = st.session_state.get(f"{prefix_key}_annee", 2026)
+        idp = st.session_state.get(idp_key, "N/A")
+
+        # Sauvegarde automatique dans l'historique de la BD
+        save_audit_in_history(idp, type_code, auditeur, zone, equipe, semaine, annee, taux, nb_ok, nb_nok, total_questions)
+
+        st.markdown(f"""
+            <div class="score-banner">
+                <div class="score-percent">{taux}%</div>
+                <div class="score-subtitle">Taux de Conformité - {audit_title}</div>
+                <div class="score-detail">{nb_ok} OK / {nb_nok} NOK (Total : {total_questions} questions)</div>
+            </div>
+        """, unsafe_allow_html=True)
+
+        lbl_card = "ÉQUIPEMENT / MACHINE" if type_code == "AM" else "ZONE / ÎLOT"
+
+        st.markdown(f"""
+            <div class="info-grid">
+                <div class="info-card"><div class="info-label">AUDITEUR</div><div class="info-val">{auditeur}</div></div>
+                <div class="info-card"><div class="info-label">{lbl_card}</div><div class="info-val">{zone}</div></div>
+                <div class="info-card"><div class="info-label">ÉQUIPE</div><div class="info-val">{equipe}</div></div>
+                <div class="info-card"><div class="info-label">PÉRIODE</div><div class="info-val">Semaine {semaine} / {annee}</div></div>
+            </div>
+        """, unsafe_allow_html=True)
+
+        # Génération du fichier PDF en mémoire
+        pdf_bytes = generate_pdf_report(
+            audit_title, idp, auditeur, zone, equipe, semaine, annee, 
+            reponses, questions_dict, taux, nb_ok, nb_nok, total_questions
+        )
+
+        col_pdf, col_email = st.columns(2)
+        with col_pdf:
+            st.download_button(
+                label="📄 Télécharger le Rapport PDF",
+                data=pdf_bytes,
+                file_name=f"Rapport_{type_code}_{zone}_S{semaine}.pdf",
+                mime="application/pdf",
+                use_container_width=True
+            )
+
+        with col_email:
+            st.subheader("📧 Envoi par e-mail")
+            if not db_emails:
+                st.warning("Aucune adresse e-mail configurée dans les paramètres.")
+            else:
+                email_list = [e['email'] for e in db_emails]
+                selected_emails = st.multiselect("Sélectionner les destinataires :", options=email_list, default=email_list)
+                
+                if st.button("📤 Envoyer le rapport par email", use_container_width=True):
+                    if not selected_emails:
+                        st.error("Veuillez choisir au moins un destinataire.")
+                    else:
+                        with st.spinner("Envoi de l'e-mail en cours..."):
+                            success, msg = send_email_with_pdf(
+                                pdf_bytes, audit_title, idp, auditeur, zone, 
+                                equipe, semaine, annee, taux, nb_ok, nb_nok, total_questions, selected_emails
+                            )
+                            if success:
+                                st.success(msg)
+                            else:
+                                st.error(msg)
+
+        st.markdown("---")
+        if st.button("🔄 Démarrer un nouvel audit", use_container_width=True):
+            st.session_state[step_key] = 1
+            st.session_state[reponses_key] = {}
+            st.session_state[idp_key] = f"022026301{random.randint(10,99)}"
+            st.rerun()
