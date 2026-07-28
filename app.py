@@ -281,6 +281,17 @@ def convert_df_to_excel(df):
     output.seek(0)
     return output.getvalue()
 
+def enregistrer_audit(idp, type_audit, auditeur, zone, equipe, semaine, annee, score, nb_ok, nb_nok, total_q):
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute("""
+        INSERT INTO historique_audits 
+        (idp, type_audit, auditeur, zone, equipe, semaine, annee, date_audit, score_pourcentage, nb_ok, nb_nok, total_questions)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (idp, type_audit, auditeur, zone, equipe, semaine, annee, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), score, nb_ok, nb_nok, total_q))
+    conn.commit()
+    conn.close()
+
 # --- STYLES CSS PERSONNALISÉS ---
 st.markdown("""
     <style>
@@ -297,9 +308,97 @@ if "admin_authenticated" not in st.session_state:
     st.session_state.admin_authenticated = False
 
 # ==============================================================================
+# FONCTION GENERIQUE DE FORMULAIRE D'AUDIT
+# ==============================================================================
+def render_audit_form(type_audit, title_text, location_label, location_table):
+    st.title(title_text)
+    
+    auditeurs = [a['nom'] for a in get_items("auditeurs")]
+    locations = [loc['nom'] for loc in get_items(location_table)]
+    questions_dict = get_questions_dict(type_audit)
+
+    if not questions_dict:
+        st.warning("⚠️ Aucune question enregistrée pour cet audit. Rendez-vous dans les paramètres pour en ajouter.")
+        return
+
+    with st.form(key=f"form_audit_{type_audit}"):
+        col1, col2 = st.columns(2)
+        with col1:
+            idp = st.text_input("IDP / Matricule Auditeur :", key=f"idp_{type_audit}")
+            auditeur = st.selectbox("Nom de l'auditeur :", options=auditeurs if auditeurs else ["Inconnu"], key=f"aud_{type_audit}")
+            zone = st.selectbox(f"{location_label} :", options=locations if locations else ["Inconnue"], key=f"loc_{type_audit}")
+        with col2:
+            equipe = st.selectbox("Équipe :", ["Équipe A (Matin)", "Équipe B (Après-midi)", "Équipe C (Nuit)", "Journée"], key=f"eq_{type_audit}")
+            curr_week = datetime.now().isocalendar()[1]
+            curr_year = datetime.now().year
+            semaine = st.number_input("Semaine :", min_value=1, max_value=53, value=curr_week, key=f"sem_{type_audit}")
+            annee = st.number_input("Année :", min_value=2020, max_value=2035, value=curr_year, key=f"yr_{type_audit}")
+
+        st.markdown("---")
+        st.subheader("📋 Questionnaire d'évaluation")
+
+        reponses = {}
+        q_counter = 0
+
+        for cat, q_list in questions_dict.items():
+            st.markdown(f"### 📌 {cat}")
+            for q in q_list:
+                q_counter += 1
+                c_q, c_res, c_photo = st.columns([3, 1.5, 1.5])
+                with c_q:
+                    st.write(f"**{q_counter}.** {q}")
+                    comment = st.text_input("Observation / Remarque :", key=f"comm_{type_audit}_{q_counter}")
+                with c_res:
+                    statut = st.radio("Statut", ["✓ OK / Conforme", "✕ NOK / Non conforme"], key=f"stat_{type_audit}_{q_counter}")
+                with c_photo:
+                    photo = st.file_uploader("Prendre une photo", type=["png", "jpg", "jpeg"], key=f"pic_{type_audit}_{q_counter}")
+
+                reponses[q_counter] = {
+                    "statut": statut,
+                    "comment": comment,
+                    "photo": photo
+                }
+            st.markdown("---")
+
+        submit_btn = st.form_submit_button("✅ Valider et Générer le Rapport PDF", use_container_width=True)
+
+    if submit_btn:
+        total_q = len(reponses)
+        nb_ok = sum(1 for r in reponses.values() if r["statut"].startswith("✓"))
+        nb_nok = total_q - nb_ok
+        taux = round((nb_ok / total_q * 100), 1) if total_q > 0 else 0
+
+        # Save to DB
+        enregistrer_audit(idp, type_audit, auditeur, zone, equipe, semaine, annee, taux, nb_ok, nb_nok, total_q)
+
+        st.success(f"🎉 Audit enregistré avec succès ! Score de conformité : **{taux}%** ({nb_ok} OK / {nb_nok} NOK)")
+
+        pdf_bytes = generate_pdf_report(
+            f"Audit {type_audit}", idp, auditeur, zone, equipe, semaine, annee,
+            reponses, questions_dict, taux, nb_ok, nb_nok, total_q
+        )
+
+        st.download_button(
+            label="📥 Télécharger le Rapport PDF",
+            data=pdf_bytes,
+            file_name=f"Rapport_{type_audit}_{zone}_S{semaine}.pdf",
+            mime="application/pdf",
+            type="primary"
+        )
+
+# ==============================================================================
+# PAGES PRINCIPALES
+# ==============================================================================
+if page == "📋 Audit 5S Hebdo":
+    render_audit_form("5S", "📋 Audit 5S Hebdomadaire", "Zone / Îlot", "zones")
+
+elif page == "🛠️ Audit Auto Maintenance":
+    render_audit_form("AM", "🛠️ Audit Auto Maintenance (AM)", "Équipement / Machine", "equipements")
+
+# ==============================================================================
 # PAGE : HISTORIQUE DES AUDITS
 # ==============================================================================
-if page == "📊 Historique des Audits":
+elif page == "📊 Historique des Audits":
     st.title("📊 Historique des Audits Réalisés")
 
     conn = get_db_connection()
@@ -382,7 +481,6 @@ if page == "📊 Historique des Audits":
             
             q_dict = get_questions_dict(type_code)
             
-            # Reconstruction des réponses fictives basées sur les ratios OK/NOK enregistrés
             total_q = int(selected_row['total_questions'])
             nb_ok = int(selected_row['nb_ok'])
             
