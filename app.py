@@ -137,7 +137,7 @@ def seed_default_questions(cursor):
         ("Réalisation des Tâches", "Les opérateurs signalent les écarts observés (défauts, bruit, jeu, fuite...)."),
         ("Traçabilité et Enregistrement", "Les anomalies détectées sont enregistrées dans le QRCI."),
         ("Traçabilité et Enregistrement", "Les bons de travail sont émis lorsque nécessaire et transmis à la maintenance."),
-        ("Traçabilité et Enregistrement", "Le tableau de bord AM (SIM, taux de complétion, anomalies...) est mis à jour regularly en mode projet."),
+        ("Traçabilité et Enregistrement", "Le tableau de bord AM (SIM, taux de complétion, anomalies...) est mis à jour régulièrement en mode projet."),
         ("Traçabilité et Enregistrement", "Les actions issues des audits AM précédents sont suivies en SIM PROD et clôturées.")
     ]
     for cat, q in q_am:
@@ -230,7 +230,7 @@ def get_questions_dict(type_audit):
         questions_dict[cat].append(r['intitule'])
     return questions_dict
 
-# --- FONCTION DE GÉNÉRATION DU PDF ---
+# --- FONCTION DE GÉNÉRATION DU PDF (CORRIGÉE & SÉCURISÉE) ---
 def generate_pdf_report(audit_title, idp, auditeur, zone, equipe, semaine, annee, reponses, type_code, taux, nb_ok, nb_nok, total_q):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36)
@@ -273,11 +273,13 @@ def generate_pdf_report(audit_title, idp, auditeur, zone, equipe, semaine, annee
         
         table_q_data = []
         for q_id, q_text in questions:
+            # Récupération sécurisée via l'ID exact de la question (int ou str)
             rep = reponses.get(q_id, reponses.get(str(q_id), {}))
-            statut_txt = rep.get("statut", "Non répondu")
+            statut_txt = rep.get("statut", "")
             comment_txt = rep.get("comment", "")
             
-            if statut_txt and (str(statut_txt).startswith("✓") or "OK" in str(statut_txt)):
+            # Analyse stricte du statut pour éviter tout décalage
+            if statut_txt and ("✓" in str(statut_txt) or "OK" in str(statut_txt)):
                 status_p = Paragraph("<font color='#16a34a'><b>✓ OK / CONFORME</b></font>", text_normal)
             else:
                 status_p = Paragraph("<font color='#dc2626'><b>✕ NOK / NON CONFORME</b></font>", text_normal)
@@ -647,7 +649,6 @@ else:
 
         if st.button("✅ Valider et Terminer l'Audit", use_container_width=True):
             reponses = st.session_state[reponses_key]
-            # Vérifie qu'on a répondu pour chaque ID de question présent en base
             all_q_ids = [q_id for q_list in q_items_with_ids.values() for q_id, _ in q_list]
             if any(q_id not in reponses or reponses[q_id]["statut"] is None for q_id in all_q_ids):
                 st.error("⚠️ Veuillez répondre à toutes les questions.")
@@ -657,7 +658,7 @@ else:
 
     elif st.session_state[step_key] == 4:
         reponses = st.session_state[reponses_key]
-        nb_ok = sum(1 for rep in reponses.values() if rep["statut"] and rep["statut"].startswith("✓"))
+        nb_ok = sum(1 for rep in reponses.values() if rep["statut"] and ("✓" in rep["statut"] or "OK" in rep["statut"]))
         nb_nok = total_questions - nb_ok
         taux = round((nb_ok / total_questions) * 100, 1) if total_questions > 0 else 0
 
