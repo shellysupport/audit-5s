@@ -138,7 +138,7 @@ def seed_default_questions(cursor):
         ("Traçabilité et Enregistrement", "Les anomalies détectées sont enregistrées dans le QRCI."),
         ("Traçabilité et Enregistrement", "Les bons de travail sont émis lorsque nécessaire et transmis à la maintenance."),
         ("Traçabilité et Enregistrement", "Le tableau de bord AM (SIM, taux de complétion, anomalies...) est mis à jour régulièrement en mode projet."),
-        ("Traçabilité et Enregistrement", "Les actions issues des audits AM précédents sont suivies en SIM PROD et clôturées.")
+        ("Traçabilité et Enregistrement", "Les actions issues des audits AM précédents sont suivis en SIM PROD et clôturées.")
     ]
     for cat, q in q_am:
         cursor.execute("INSERT INTO questions (type_audit, categorie, intitule) VALUES (?, ?, ?)", ("AM", cat, q))
@@ -273,14 +273,23 @@ def generate_pdf_report(audit_title, idp, auditeur, zone, equipe, semaine, annee
         
         table_q_data = []
         for q_id, q_text in questions:
+            # CORRECTION ROBUSTE DE LA RECHERCHE DES RÉPONSES (int ou str)
             rep = reponses.get(q_id, reponses.get(str(q_id), {}))
-            statut_txt = rep.get("statut", "")
+            if not rep:
+                # Recherche par correspondance de texte si l'ID ne matche pas
+                for k, v in reponses.items():
+                    if str(k) == str(q_id):
+                        rep = v
+                        break
+
+            statut_txt = str(rep.get("statut", ""))
             comment_txt = rep.get("comment", "")
             
-            if statut_txt and ("✓" in str(statut_txt) or "OK" in str(statut_txt)):
-                status_p = Paragraph("<font color='#16a34a'><b>✓ OK / CONFORME</b></font>", text_normal)
-            else:
+            # Vérification rigoureuse du statut NOK
+            if "NOK" in statut_txt.upper() or "NON" in statut_txt.upper():
                 status_p = Paragraph("<font color='#dc2626'><b>✕ NOK / NON CONFORME</b></font>", text_normal)
+            else:
+                status_p = Paragraph("<font color='#16a34a'><b>✓ OK / CONFORME</b></font>", text_normal)
             
             q_content = [Paragraph(q_text, text_bold)]
             if comment_txt:
@@ -657,9 +666,8 @@ else:
     elif st.session_state[step_key] == 4:
         reponses = st.session_state[reponses_key]
         
-        # CORRECTION : Comptage strict basé explicitement sur la présence de "OK" ou "NOK"
         nb_ok = sum(1 for rep in reponses.values() if rep.get("statut") and "OK" in str(rep.get("statut")))
-        nb_nok = sum(1 for rep in reponses.values() if rep.get("statut") and "NOK" in str(rep.get("statut")))
+        nb_nok = sum(1 for rep in reponses.values() if rep.get("statut") and ("NOK" in str(rep.get("statut")) or "NON" in str(rep.get("statut"))))
         
         total_effective = nb_ok + nb_nok
         taux = round((nb_ok / total_effective) * 100, 1) if total_effective > 0 else 0
