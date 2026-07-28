@@ -273,10 +273,8 @@ def generate_pdf_report(audit_title, idp, auditeur, zone, equipe, semaine, annee
         
         table_q_data = []
         for q_id, q_text in questions:
-            # CORRECTION ROBUSTE DE LA RECHERCHE DES RÉPONSES (int ou str)
             rep = reponses.get(q_id, reponses.get(str(q_id), {}))
             if not rep:
-                # Recherche par correspondance de texte si l'ID ne matche pas
                 for k, v in reponses.items():
                     if str(k) == str(q_id):
                         rep = v
@@ -285,7 +283,6 @@ def generate_pdf_report(audit_title, idp, auditeur, zone, equipe, semaine, annee
             statut_txt = str(rep.get("statut", ""))
             comment_txt = rep.get("comment", "")
             
-            # Vérification rigoureuse du statut NOK
             if "NOK" in statut_txt.upper() or "NON" in statut_txt.upper():
                 status_p = Paragraph("<font color='#dc2626'><b>✕ NOK / NON CONFORME</b></font>", text_normal)
             else:
@@ -384,10 +381,6 @@ st.markdown("""
     .s-header { display: flex; align-items: center; gap: 10px; margin-top: 25px; margin-bottom: 15px; }
     .badge-s { background-color: #0f172a; color: white; font-weight: 800; padding: 4px 10px; border-radius: 6px; font-size: 13px; }
     .s-title-text { font-size: 16px; font-weight: 800; color: #0f172a; letter-spacing: -0.3px; }
-    .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 20px; }
-    .info-card { background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.02); }
-    .info-label { font-size: 11px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; }
-    .info-val { font-size: 15px; font-weight: 800; color: #0f172a; margin-top: 2px; }
     .score-banner { background-color: #0f172a; color: white; border-radius: 12px; padding: 24px; text-align: center; margin: 20px 0; }
     .score-percent { font-size: 56px; font-weight: 900; line-height: 1; margin-bottom: 6px; }
     .score-subtitle { font-size: 12px; font-weight: 800; letter-spacing: 1px; color: #94a3b8; text-transform: uppercase; }
@@ -408,7 +401,7 @@ if "admin_authenticated" not in st.session_state:
     st.session_state.admin_authenticated = False
 
 # ==============================================================================
-# PAGE : HISTORIQUE DES AUDITS & RÉGÉNÉRATION PDF
+# PAGE : HISTORIQUE DES AUDITS & TABLEAU INTERACTIF
 # ==============================================================================
 if page == "📊 Historique des Audits":
     st.title("📊 Historique des Audits Réalisés")
@@ -438,36 +431,44 @@ if page == "📊 Historique des Audits":
         kpi3.metric("Dernier audit", filtered_df['date_audit'].iloc[0] if not filtered_df.empty else "N/A")
 
         st.markdown("---")
-        st.subheader("📥 Téléchargement / Régénération des Rapports PDF par Audit")
+        st.subheader("📋 Tableau de l'historique (Sélectionnez une ligne pour gérer le rapport)")
 
-        for _, row in filtered_df.iterrows():
+        # Affichage du tableau interactif avec sélection de ligne unique
+        event = st.dataframe(
+            filtered_df[['id', 'idp', 'type_audit', 'auditeur', 'zone', 'equipe', 'semaine', 'annee', 'date_audit', 'score_pourcentage', 'nb_ok', 'nb_nok']],
+            use_container_width=True,
+            selection_mode="single-row",
+            on_select="rerun",
+            key="table_historique_audits"
+        )
+
+        selected_rows = event.selection.rows if event and hasattr(event, "selection") else []
+
+        if selected_rows:
+            selected_index = selected_rows[0]
+            row = filtered_df.iloc[selected_index]
+            
             audit_label_type = "Audit 5S Hebdo" if row['type_audit'] == "5S" else "Audit Auto Maintenance"
-            with st.expander(f"Audit #{row['id']} | IDP : {row['idp']} | [{row['type_audit']}] {row['zone']} - S{row['semaine']}/{row['annee']} ({row['auditeur']} - {row['score_pourcentage']}%)"):
-                col_info1, col_info2, col_btn = st.columns([2, 2, 1])
-                with col_info1:
-                    st.write(f"**Date :** {row['date_audit']}")
-                    st.write(f"**Équipe :** {row['equipe']}")
-                with col_info2:
-                    st.write(f"**Résultat :** {row['nb_ok']} OK / {row['nb_nok']} NOK")
-                    st.write(f"**Conformité :** {row['score_pourcentage']}%")
-                with col_btn:
-                    if row['details_json']:
-                        rep_dict = json.loads(row['details_json'])
-                        
-                        pdf_regen_bytes = generate_pdf_report(
-                            audit_label_type, row['idp'], row['auditeur'], row['zone'], 
-                            row['equipe'], row['semaine'], row['annee'], rep_dict, 
-                            row['type_audit'], row['score_pourcentage'], row['nb_ok'], row['nb_nok'], row['total_questions']
-                        )
-                        st.download_button(
-                            label="📄 Régénérer PDF",
-                            data=pdf_regen_bytes,
-                            file_name=f"Rapport_{row['type_audit']}_{row['zone']}_S{row['semaine']}.pdf",
-                            mime="application/pdf",
-                            key=f"regen_pdf_{row['id']}"
-                        )
-                    else:
-                        st.warning("Détails non disponibles pour cet ancien audit.")
+            
+            st.markdown("### 📄 Rapport sélectionné")
+            st.info(f"Audit #{row['id']} | IDP : **{row['idp']}** | [{row['type_audit']}] **{row['zone']}** (Semaine {row['semaine']}/{row['annee']}) - Auditeur : **{row['auditeur']}** - Conformité : **{row['score_pourcentage']}%** ({row['nb_ok']} OK / {row['nb_nok']} NOK)")
+
+            if row['details_json']:
+                rep_dict = json.loads(row['details_json'])
+                pdf_regen_bytes = generate_pdf_report(
+                    audit_label_type, row['idp'], row['auditeur'], row['zone'], 
+                    row['equipe'], row['semaine'], row['annee'], rep_dict, 
+                    row['type_audit'], row['score_pourcentage'], row['nb_ok'], row['nb_nok'], row['total_questions']
+                )
+                st.download_button(
+                    label="📄 Télécharger / Régénérer le Rapport PDF",
+                    data=pdf_regen_bytes,
+                    file_name=f"Rapport_{row['type_audit']}_{row['zone']}_S{row['semaine']}.pdf",
+                    mime="application/pdf",
+                    use_container_width=True
+                )
+            else:
+                st.warning("Détails non disponibles pour cet ancien audit.")
 
         st.markdown("---")
         excel_data = convert_df_to_excel(filtered_df[['idp', 'type_audit', 'auditeur', 'zone', 'equipe', 'semaine', 'annee', 'date_audit', 'score_pourcentage', 'nb_ok', 'nb_nok', 'total_questions']])
