@@ -1,6 +1,4 @@
 import streamlit as st
-if st.query_params.get("secret") == "download":
-    st.download_button("Télécharger DB", open("audit_config.db", "rb"), "audit_config.db")
 
 import sqlite3
 import random
