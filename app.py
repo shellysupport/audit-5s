@@ -279,6 +279,14 @@ def generate_pdf_report(audit_title, idp, auditeur, zone, equipe, semaine, annee
     buffer.seek(0)
     return buffer.getvalue()
 
+# --- FONCTION DE GÉNÉRATION DE L'EXCEL ---
+def convert_df_to_excel(df):
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='Historique Audits')
+    output.seek(0)
+    return output.getvalue()
+
 # --- ENVOI DE EMAIL DE RAPPORT ---
 def send_email_with_pdf(pdf_bytes, audit_title, idp, auditeur, zone, equipe, semaine, annee, taux, nb_ok, nb_nok, total_q, recipients):
     smtp_server = get_config_val("smtp_server")
@@ -445,6 +453,17 @@ if page == "📊 Historique des Audits":
             'nb_nok': 'NOK',
             'total_questions': 'Total Questions'
         })
+
+        col_tbl, col_exp = st.columns([4, 1])
+        with col_exp:
+            excel_data = convert_df_to_excel(df_display[['IDP', 'Type Audit', 'Auditeur', 'Zone', 'Équipe', 'Semaine', 'Année', 'Date & Heure', 'Résultat (%)', 'OK', 'NOK', 'Total Questions']])
+            st.download_button(
+                label="📥 Exporter vers Excel",
+                data=excel_data,
+                file_name=f"historique_audits_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
 
         st.dataframe(
             df_display[['IDP', 'Type Audit', 'Auditeur', 'Zone', 'Équipe', 'Semaine', 'Année', 'Date & Heure', 'Résultat (%)', 'OK', 'NOK']],
