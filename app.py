@@ -4,6 +4,7 @@ import random
 from datetime import datetime
 import smtplib
 import io
+import pandas as pd
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.application import MIMEApplication
@@ -19,10 +20,10 @@ from reportlab.lib.units import inch
 st.set_page_config(
     page_title="Audits d'Atelier",
     page_icon="📋",
-    layout="centered"
+    layout="wide"
 )
 
-# --- BASE DE DONNÉES (PERSISTANCE DES PARAMÈTRES & CONFIG) ---
+# --- BASE DE DONNÉES (PERSISTANCE DES PARAMÈTRES & HISTORIQUE) ---
 def get_db_connection():
     conn = sqlite3.connect('audit_config.db')
     conn.row_factory = sqlite3.Row
@@ -36,6 +37,23 @@ def init_db():
     c.execute('''CREATE TABLE IF NOT EXISTS emails (id INTEGER PRIMARY KEY AUTOINCREMENT, label TEXT NOT NULL, email TEXT UNIQUE NOT NULL)''')
     c.execute('''CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT NOT NULL)''')
     
+    # Table Historique des Audits
+    c.execute('''CREATE TABLE IF NOT EXISTS historique_audits (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        idp TEXT,
+        type_audit TEXT NOT NULL,
+        auditeur TEXT NOT NULL,
+        zone TEXT NOT NULL,
+        equipe TEXT,
+        semaine INTEGER,
+        annee INTEGER,
+        date_audit TEXT,
+        score_pourcentage REAL,
+        nb_ok INTEGER,
+        nb_nok INTEGER,
+        total_questions INTEGER
+    )''')
+
     c.execute('''CREATE TABLE IF NOT EXISTS questions (
         id INTEGER PRIMARY KEY AUTOINCREMENT, 
         type_audit TEXT NOT NULL, 
@@ -148,6 +166,20 @@ def delete_item(table, item_id):
     conn = get_db_connection()
     conn.execute(f"DELETE FROM {table} WHERE id = ?", (item_id,))
     conn.commit()
+    conn.close()
+
+def save_audit_in_history(idp, type_audit, auditeur, zone, equipe, semaine, annee, score, nb_ok, nb_nok, total_q):
+    conn = get_db_connection()
+    c = conn.cursor()
+    # Vérifie si l'audit IDP a déjà été enregistré pour éviter les doublons
+    c.execute("SELECT id FROM historique_audits WHERE idp = ?", (idp,))
+    if c.fetchone() is None:
+        date_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+        c.execute('''INSERT INTO historique_audits 
+                    (idp, type_audit, auditeur, zone, equipe, semaine, annee, date_audit, score_pourcentage, nb_ok, nb_nok, total_questions)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                  (idp, type_audit, auditeur, zone, equipe, semaine, annee, date_str, score, nb_ok, nb_nok, total_q))
+        conn.commit()
     conn.close()
 
 def get_questions_dict(type_audit):
@@ -296,12 +328,10 @@ st.markdown("""
     <style>
     .stApp { background-color: #f8fafc; }
     
-    /* Titres de catégories */
     .s-header { display: flex; align-items: center; gap: 10px; margin-top: 25px; margin-bottom: 15px; }
     .badge-s { background-color: #0f172a; color: white; font-weight: 800; padding: 4px 10px; border-radius: 6px; font-size: 13px; }
     .s-title-text { font-size: 16px; font-weight: 800; color: #0f172a; letter-spacing: -0.3px; }
     
-    /* Cartes d'informations & score */
     .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 20px; }
     .info-card { background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.02); }
     .info-label { font-size: 11px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; }
@@ -311,12 +341,8 @@ st.markdown("""
     .score-percent { font-size: 56px; font-weight: 900; line-height: 1; margin-bottom: 6px; }
     .score-subtitle { font-size: 12px; font-weight: 800; letter-spacing: 1px; color: #94a3b8; text-transform: uppercase; }
     .score-detail { font-size: 14px; font-weight: 600; margin-top: 8px; color: #cbd5e1; }
-    .alert-info-custom { background-color: #dbeafe; border: 1px solid #bfdbfe; color: #1e40af; border-radius: 8px; padding: 14px; font-weight: 600; margin-top: 15px; }
     div.stButton > button { border-radius: 8px; font-weight: 700; }
 
-    /* =========================================================
-       CORRECTION DÉFINITIVE PAR POSITION (1er = VERT / 2nd = ROUGE)
-       ========================================================= */
     div[data-testid="stRadio"] > div[role="radiogroup"] {
         display: flex;
         flex-direction: column;
@@ -334,7 +360,6 @@ st.markdown("""
         transition: all 0.2s ease;
     }
 
-    /* --- 1ère OPTION (✓ OK / Conforme) -> VERT QUAND COCHÉ --- */
     div[data-testid="stRadio"] label:nth-of-type(1):has(input:checked) {
         background-color: #f0fdf4 !important;
         border-color: #16a34a !important;
@@ -346,7 +371,6 @@ st.markdown("""
         box-shadow: inset 0 0 0 3px #ffffff !important;
     }
 
-    /* --- 2ème OPTION (✕ NOK / Non conforme) -> ROUGE QUAND COCHÉ --- */
     div[data-testid="stRadio"] label:nth-of-type(2):has(input:checked) {
         background-color: #fef2f2 !important;
         border-color: #dc2626 !important;
@@ -358,7 +382,6 @@ st.markdown("""
         box-shadow: inset 0 0 0 3px #ffffff !important;
     }
 
-    /* Isolement de la barre latérale pour ne pas modifier la navigation */
     section[data-testid="stSidebar"] div[data-testid="stRadio"] label {
         border-color: #e2e8f0 !important;
         background-color: #ffffff !important;
@@ -369,15 +392,71 @@ st.markdown("""
 
 # --- NAVIGATION SIDEBAR ---
 st.sidebar.title("📌 Menu")
-page = st.sidebar.radio("Navigation", ["📋 Audit 5S Hebdo", "🛠️ Audit Auto Maintenance", "⚙️ Paramètres / Admin"])
+page = st.sidebar.radio("Navigation", ["📋 Audit 5S Hebdo", "🛠️ Audit Auto Maintenance", "📊 Historique des Audits", "⚙️ Paramètres / Admin"])
 
 if "admin_authenticated" not in st.session_state:
     st.session_state.admin_authenticated = False
 
 # ==============================================================================
+# PAGE : HISTORIQUE DES AUDITS
+# ==============================================================================
+if page == "📊 Historique des Audits":
+    st.title("📊 Historique des Audits Réalisés")
+
+    conn = get_db_connection()
+    df_history = pd.read_sql_query("SELECT * FROM historique_audits ORDER BY id DESC", conn)
+    conn.close()
+
+    if df_history.empty:
+        st.info("Aucun audit n'a encore été enregistré dans l'historique.")
+    else:
+        # Filtres
+        col_f1, col_f2 = st.columns(2)
+        with col_f1:
+            type_filter = st.multiselect("Filtrer par type d'audit :", options=df_history['type_audit'].unique(), default=df_history['type_audit'].unique())
+        with col_f2:
+            zone_filter = st.multiselect("Filtrer par zone :", options=df_history['zone'].unique(), default=df_history['zone'].unique())
+
+        filtered_df = df_history[
+            (df_history['type_audit'].isin(type_filter)) & 
+            (df_history['zone'].isin(zone_filter))
+        ]
+
+        # KPIs
+        kpi1, kpi2, kpi3 = st.columns(3)
+        kpi1.metric("Nombre total d'audits", len(filtered_df))
+        moyenne_score = filtered_df['score_pourcentage'].mean() if not filtered_df.empty else 0
+        kpi2.metric("Moyenne Conformité (%)", f"{moyenne_score:.1f}%")
+        kpi3.metric("Dernier audit", filtered_df['date_audit'].iloc[0] if not filtered_df.empty else "N/A")
+
+        st.markdown("---")
+
+        # Renommage des colonnes pour un affichage propre
+        df_display = filtered_df.rename(columns={
+            'idp': 'IDP',
+            'type_audit': 'Type Audit',
+            'auditeur': 'Auditeur',
+            'zone': 'Zone',
+            'equipe': 'Équipe',
+            'semaine': 'Semaine',
+            'annee': 'Année',
+            'date_audit': 'Date & Heure',
+            'score_pourcentage': 'Résultat (%)',
+            'nb_ok': 'OK',
+            'nb_nok': 'NOK',
+            'total_questions': 'Total Questions'
+        })
+
+        st.dataframe(
+            df_display[['IDP', 'Type Audit', 'Auditeur', 'Zone', 'Équipe', 'Semaine', 'Année', 'Date & Heure', 'Résultat (%)', 'OK', 'NOK']],
+            use_container_width=True,
+            hide_index=True
+        )
+
+# ==============================================================================
 # PAGE : PARAMÈTRES / ADMIN
 # ==============================================================================
-if page == "⚙️ Paramètres / Admin":
+elif page == "⚙️ Paramètres / Admin":
     st.title("⚙️ Paramètres de l'application")
 
     if not st.session_state.admin_authenticated:
@@ -628,7 +707,7 @@ else:
                     st.session_state[step_key] = 4
                     st.rerun()
 
-    # ÉCRAN 4 : RAPPORT + ENVOI MAIL
+    # ÉCRAN 4 : RAPPORT + SAUVEGARDER & ENVOI MAIL
     elif st.session_state[step_key] == 4:
         if st.button("← Retour au questionnaire"):
             st.session_state[step_key] = 3
@@ -648,6 +727,9 @@ else:
         semaine = st.session_state[f"{prefix_key}_semaine"]
         annee = st.session_state[f"{prefix_key}_annee"]
 
+        # Sauvegarde automatique de l'audit dans l'historique de la BD
+        save_audit_in_history(idp, type_code, auditeur, zone, equipe, semaine, annee, taux, nb_ok, nb_nok, total_questions)
+
         st.markdown(f"""
             <div class="info-grid">
                 <div class="info-card"><div class="info-label">IDP</div><div class="info-val">{idp}</div></div>
@@ -657,79 +739,35 @@ else:
                 <div class="info-card"><div class="info-label">PÉRIODE</div><div class="info-val">Semaine {semaine} / {annee}</div></div>
                 <div class="info-card"><div class="info-label">POINTS NON CONFORMES</div><div class="info-val-nok">{nb_nok} / {total_questions}</div></div>
             </div>
-        """, unsafe_allow_html=True)
-
-        st.markdown(f"""
+            
             <div class="score-banner">
+                <div class="score-subtitle">TAUX DE CONFORMITÉ GLOBALE</div>
                 <div class="score-percent">{taux}%</div>
-                <div class="score-subtitle">TAUX DE CONFORMITÉ</div>
-                <div class="score-detail">✓ {nb_ok} OK &nbsp;&nbsp;•&nbsp;&nbsp; ✕ {nb_nok} NOK</div>
+                <div class="score-detail">{nb_ok} CONFORMES / {nb_nok} NON CONFORMES</div>
             </div>
         """, unsafe_allow_html=True)
 
-        pdf_bytes = generate_pdf_report(
-            audit_title, idp, auditeur, zone, equipe, semaine, annee,
-            reponses, questions_dict, taux, nb_ok, nb_nok, total_questions
-        )
+        # Génération du fichier PDF
+        pdf_bytes = generate_pdf_report(audit_title, idp, auditeur, zone, equipe, semaine, annee, reponses, questions_dict, taux, nb_ok, nb_nok, total_questions)
 
-        st.download_button(
-            label="📥 Télécharger le Rapport PDF",
-            data=pdf_bytes,
-            file_name=f"Rapport_{type_code}_{zone}_S{semaine}.pdf",
-            mime="application/pdf",
-            use_container_width=True
-        )
+        col_pdf, col_mail = st.columns(2)
+        with col_pdf:
+            st.download_button(
+                label="📄 Télécharger le Rapport PDF",
+                data=pdf_bytes,
+                file_name=f"Rapport_{type_code}_{zone}_S{semaine}.pdf",
+                mime="application/pdf",
+                use_container_width=True
+            )
 
-        st.markdown("---")
-        st.subheader("✉️ Envoi du rapport par E-mail")
-        
-        email_list = [e['email'] for e in db_emails]
-        if email_list:
-            selected_recipients = st.multiselect("Sélectionnez les destinataires :", options=email_list, default=email_list)
-            
-            if st.button("🚀 Envoyer le rapport par e-mail", use_container_width=True):
-                if not selected_recipients:
-                    st.error("Veuillez sélectionner au moins un destinataire.")
+        with col_mail:
+            recipients = [e['email'] for e in db_emails]
+            if st.button("✉️ Envoyer par E-mail aux responsables", use_container_width=True):
+                if not recipients:
+                    st.error("Aucun destinataire configuré dans les Paramètres.")
                 else:
-                    with st.spinner("Envoi de l'e-mail en cours..."):
-                        success, msg = send_email_with_pdf(
-                            pdf_bytes, audit_title, idp, auditeur, zone, equipe, semaine, annee,
-                            taux, nb_ok, nb_nok, total_questions, selected_recipients
-                        )
-                        if success:
-                            st.success(f"✅ {msg}")
-                        else:
-                            st.error(f"❌ {msg}")
-        else:
-            st.info("Aucune adresse e-mail configurée dans les Paramètres.")
-
-        st.markdown("---")
-        st.subheader("📋 Récapitulatif détaillé des réponses")
-        
-        q_counter = 0
-        for category, questions in questions_dict.items():
-            st.markdown(f'<div class="s-header"><span class="badge-s">📌</span><span class="s-title-text">{category}</span></div>', unsafe_allow_html=True)
-            
-            for q in questions:
-                q_counter += 1
-                rep = reponses.get(q_counter, {})
-                statut_txt = rep.get("statut", "")
-                
-                if "Conforme" in statut_txt or "OK" in statut_txt:
-                    st.markdown(f"✅ **{q}**")
-                else:
-                    st.markdown(f"❌ **{q}**")
-                
-                if rep.get("comment"):
-                    st.caption(f"💬 *Observation : {rep['comment']}*")
-                
-                if rep.get("photo"):
-                    st.image(rep["photo"], width=240)
-                    
-            st.markdown("---")
-        
-        if st.button("🔄 Commencer un nouvel audit", use_container_width=True):
-            st.session_state[step_key] = 1
-            st.session_state[reponses_key] = {}
-            st.session_state[idp_key] = f"022026301{random.randint(10,99)}"
-            st.rerun()
+                    success, msg = send_email_with_pdf(pdf_bytes, audit_title, idp, auditeur, zone, equipe, semaine, annee, taux, nb_ok, nb_nok, total_questions, recipients)
+                    if success:
+                        st.success(msg)
+                    else:
+                        st.error(msg)
