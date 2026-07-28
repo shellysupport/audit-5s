@@ -37,6 +37,7 @@ def init_db():
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS auditeurs (id INTEGER PRIMARY KEY AUTOINCREMENT, nom TEXT UNIQUE NOT NULL)''')
     c.execute('''CREATE TABLE IF NOT EXISTS zones (id INTEGER PRIMARY KEY AUTOINCREMENT, nom TEXT UNIQUE NOT NULL)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS equipements (id INTEGER PRIMARY KEY AUTOINCREMENT, nom TEXT UNIQUE NOT NULL)''')
     c.execute('''CREATE TABLE IF NOT EXISTS emails (id INTEGER PRIMARY KEY AUTOINCREMENT, label TEXT NOT NULL, email TEXT UNIQUE NOT NULL)''')
     c.execute('''CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT NOT NULL)''')
     
@@ -72,6 +73,10 @@ def init_db():
     c.execute("SELECT COUNT(*) FROM zones")
     if c.fetchone()[0] == 0:
         c.executemany("INSERT INTO zones (nom) VALUES (?)", [("AUTOMATISME",), ("LIGNE 1",), ("MAINTENANCE",)])
+
+    c.execute("SELECT COUNT(*) FROM equipements")
+    if c.fetchone()[0] == 0:
+        c.executemany("INSERT INTO equipements (nom) VALUES (?)", [("Presse 01",), ("Ligne Assemblage A",), ("Robot de Soudure 02",)])
 
     c.execute("SELECT COUNT(*) FROM emails")
     if c.fetchone()[0] == 0:
@@ -213,13 +218,15 @@ def generate_pdf_report(audit_title, idp, auditeur, zone, equipe, semaine, annee
     story.append(Paragraph(f"RAPPORT D'AUDIT - {audit_title.upper()}", title_style))
     story.append(Spacer(1, 6))
     
+    label_emplacement = "<b>ÉQUIPEMENT :</b>" if "Auto" in audit_title or "AM" in audit_title else "<b>ZONE / ÎLOT :</b>"
+    
     info_data = [
         [Paragraph("<b>IDP :</b>", text_normal), Paragraph(str(idp), text_normal), Paragraph("<b>PÉRIODE :</b>", text_normal), Paragraph(f"Semaine {semaine} / {annee}", text_normal)],
         [Paragraph("<b>AUDITEUR :</b>", text_normal), Paragraph(str(auditeur), text_normal), Paragraph("<b>TAUX CONFORMITÉ :</b>", text_normal), Paragraph(f"<b>{taux}%</b> ({nb_ok} OK / {nb_nok} NOK)", text_normal)],
-        [Paragraph("<b>ZONE / ÎLOT :</b>", text_normal), Paragraph(str(zone), text_normal), Paragraph("<b>ÉQUIPE :</b>", text_normal), Paragraph(str(equipe), text_normal)],
+        [Paragraph(label_emplacement, text_normal), Paragraph(str(zone), text_normal), Paragraph("<b>ÉQUIPE :</b>", text_normal), Paragraph(str(equipe), text_normal)],
     ]
     
-    t_info = Table(info_data, colWidths=[1.1*inch, 2.3*inch, 1.4*inch, 2.2*inch])
+    t_info = Table(info_data, colWidths=[1.3*inch, 2.1*inch, 1.4*inch, 2.2*inch])
     t_info.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#f8fafc')),
         ('BOX', (0, 0), (-1, -1), 1, colors.HexColor('#cbd5e1')),
@@ -243,7 +250,7 @@ def generate_pdf_report(audit_title, idp, auditeur, zone, equipe, semaine, annee
             comment_txt = rep.get("comment", "")
             photo_file = rep.get("photo", None)
             
-            if statut_txt.startswith("✓"):
+            if statut_txt and statut_txt.startswith("✓"):
                 status_p = Paragraph("<font color='#16a34a'><b>✓ OK / CONFORME</b></font>", text_normal)
             else:
                 status_p = Paragraph("<font color='#dc2626'><b>✕ NOK / NON CONFORME</b></font>", text_normal)
@@ -297,6 +304,8 @@ def send_email_with_pdf(pdf_bytes, audit_title, idp, auditeur, zone, equipe, sem
     if not smtp_server or not smtp_user or not smtp_password:
         return False, "Configuration SMTP incomplète dans les paramètres."
 
+    lbl_loc = "Équipement / Machine" if "AM" in audit_title or "Auto" in audit_title else "Zone / Îlot"
+
     msg = MIMEMultipart()
     msg['From'] = smtp_user
     msg['To'] = ", ".join(recipients)
@@ -309,7 +318,7 @@ Veuillez trouver ci-joint le rapport PDF concernant l'audit ci-dessous :
 • Audit : {audit_title}
 • IDP : {idp}
 • Auditeur : {auditeur}
-• Zone / Îlot : {zone}
+• {lbl_loc} : {zone}
 • Équipe : {equipe}
 • Période : Semaine {semaine} / {annee}
 • Taux de Conformité : {taux}% ({nb_ok} OK / {nb_nok} NOK sur {total_q} questions)
@@ -424,7 +433,7 @@ if page == "📊 Historique des Audits":
         with col_f1:
             type_filter = st.multiselect("Filtrer par type d'audit :", options=df_history['type_audit'].unique(), default=df_history['type_audit'].unique())
         with col_f2:
-            zone_filter = st.multiselect("Filtrer par zone :", options=df_history['zone'].unique(), default=df_history['zone'].unique())
+            zone_filter = st.multiselect("Filtrer par zone / équipement :", options=df_history['zone'].unique(), default=df_history['zone'].unique())
 
         filtered_df = df_history[
             (df_history['type_audit'].isin(type_filter)) & 
@@ -443,7 +452,7 @@ if page == "📊 Historique des Audits":
             'idp': 'IDP',
             'type_audit': 'Type Audit',
             'auditeur': 'Auditeur',
-            'zone': 'Zone',
+            'zone': 'Zone / Équipement',
             'equipe': 'Équipe',
             'semaine': 'Semaine',
             'annee': 'Année',
@@ -456,7 +465,7 @@ if page == "📊 Historique des Audits":
 
         col_tbl, col_exp = st.columns([4, 1])
         with col_exp:
-            excel_data = convert_df_to_excel(df_display[['IDP', 'Type Audit', 'Auditeur', 'Zone', 'Équipe', 'Semaine', 'Année', 'Date & Heure', 'Résultat (%)', 'OK', 'NOK', 'Total Questions']])
+            excel_data = convert_df_to_excel(df_display[['IDP', 'Type Audit', 'Auditeur', 'Zone / Équipement', 'Équipe', 'Semaine', 'Année', 'Date & Heure', 'Résultat (%)', 'OK', 'NOK', 'Total Questions']])
             st.download_button(
                 label="📥 Exporter vers Excel",
                 data=excel_data,
@@ -466,7 +475,7 @@ if page == "📊 Historique des Audits":
             )
 
         st.dataframe(
-            df_display[['IDP', 'Type Audit', 'Auditeur', 'Zone', 'Équipe', 'Semaine', 'Année', 'Date & Heure', 'Résultat (%)', 'OK', 'NOK']],
+            df_display[['IDP', 'Type Audit', 'Auditeur', 'Zone / Équipement', 'Équipe', 'Semaine', 'Année', 'Date & Heure', 'Résultat (%)', 'OK', 'NOK']],
             use_container_width=True,
             hide_index=True
         )
@@ -494,11 +503,12 @@ elif page == "⚙️ Paramètres / Admin":
             st.session_state.admin_authenticated = False
             st.rerun()
 
-        tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+        tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
             "✏️ Édition / Admin Audits", 
             "📝 Checklists / Questions", 
             "👤 Auditeurs", 
-            "🏭 Zones / Îlots", 
+            "🏭 Zones / Îlots (5S)", 
+            "⚙️ Équipements / Machines (AM)",
             "📧 Emails Responsables", 
             "🔐 Sécurité & SMTP"
         ])
@@ -516,7 +526,6 @@ elif page == "⚙️ Paramètres / Admin":
             else:
                 subtab_edit, subtab_del = st.tabs(["✏️ Modifier un Audit", "🗑️ Supprimer un Audit"])
                 
-                # SÉLECTION D'UN AUDIT
                 liste_options = {
                     row['id']: f"ID #{row['id']} | [{row['type_audit']}] {row['zone']} - Semaine {row['semaine']}/{row['annee']} ({row['auditeur']})"
                     for _, row in df_audits.iterrows()
@@ -531,7 +540,7 @@ elif page == "⚙️ Paramètres / Admin":
                         with c_a:
                             e_type = st.selectbox("Type d'audit", ["5S", "AM"], index=0 if row_data['type_audit'] == "5S" else 1)
                             e_auditeur = st.text_input("Auditeur", value=str(row_data['auditeur']))
-                            e_zone = st.text_input("Zone / Îlot", value=str(row_data['zone']))
+                            e_zone = st.text_input("Zone / Machine", value=str(row_data['zone']))
                             e_equipe = st.text_input("Équipe", value=str(row_data['equipe']))
                         
                         with c_b:
@@ -559,7 +568,7 @@ elif page == "⚙️ Paramètres / Admin":
 
                 with subtab_del:
                     selected_id_del = st.selectbox("Sélectionnez l'audit à supprimer :", options=list(liste_options.keys()), format_func=lambda x: liste_options[x], key="del_select_box")
-                    st.warning("⚠️ Attention, la suppression est définitive.")
+                    st.warning("⚠️ Attention, la suppression est definitiva.")
                     
                     if st.button("❌ Supprimer définitivement l'audit", type="primary"):
                         c_db = conn.cursor()
@@ -643,7 +652,7 @@ elif page == "⚙️ Paramètres / Admin":
                     st.rerun()
 
         with tab4:
-            st.subheader("Liste des Zones")
+            st.subheader("Liste des Zones / Îlots (Pour Audit 5S)")
             for z in get_items("zones"):
                 c1, c2 = st.columns([4, 1])
                 c1.write(f"• **{z['nom']}**")
@@ -658,6 +667,21 @@ elif page == "⚙️ Paramètres / Admin":
                     st.rerun()
 
         with tab5:
+            st.subheader("Liste des Équipements / Machines (Pour Audit AM)")
+            for eq in get_items("equipements"):
+                c1, c2 = st.columns([4, 1])
+                c1.write(f"• **{eq['nom']}**")
+                if c2.button("❌", key=f"del_eq_{eq['id']}"):
+                    delete_item("equipements", eq['id'])
+                    st.rerun()
+            st.markdown("---")
+            new_eq = st.text_input("Nom de l'Équipement / Machine", key="input_eq")
+            if st.button("Ajouter l'équipement"):
+                if new_eq.strip():
+                    add_item("equipements", ["nom"], [new_eq.strip()])
+                    st.rerun()
+
+        with tab6:
             st.subheader("Adresses E-mails des Destinataires")
             for e in get_items("emails"):
                 c1, c2 = st.columns([4, 1])
@@ -673,7 +697,7 @@ elif page == "⚙️ Paramètres / Admin":
                     add_item("emails", ["label", "email"], [lbl.strip(), em.strip()])
                     st.rerun()
 
-        with tab6:
+        with tab7:
             st.subheader("🔑 Changer le mot de passe d'accès aux Paramètres")
             current_pwd = get_config_val("admin_password")
             new_pwd = st.text_input("Nouveau mot de passe Admin", type="password", value=current_pwd)
@@ -705,16 +729,21 @@ elif page == "⚙️ Paramètres / Admin":
 else:
     db_auditeurs = [a['nom'] for a in get_items("auditeurs")]
     db_zones = [z['nom'] for z in get_items("zones")]
+    db_equipements = [eq['nom'] for eq in get_items("equipements")]
     db_emails = get_items("emails")
 
     if page == "📋 Audit 5S Hebdo":
         audit_title = "Audit 5S Hebdo"
         type_code = "5S"
         prefix_key = "5s"
+        location_label = "ZONE / ÎLOT"
+        location_options = db_zones if db_zones else ["Aucune zone"]
     else:
         audit_title = "Audit Auto Maintenance"
         type_code = "AM"
         prefix_key = "am"
+        location_label = "ÉQUIPEMENT / MACHINE"
+        location_options = db_equipements if db_equipements else ["Aucun équipement"]
 
     questions_dict = get_questions_dict(type_code)
     total_questions = sum(len(q) for q in questions_dict.values())
@@ -745,7 +774,7 @@ else:
             st.session_state[step_key] = 1
             st.rerun()
         st.title("PARAMÈTRES DE L'AUDIT")
-        st.session_state[f"{prefix_key}_zone"] = st.selectbox("ZONE / ÎLOT", options=db_zones if db_zones else ["Aucune zone"])
+        st.session_state[f"{prefix_key}_zone"] = st.selectbox(location_label, options=location_options)
         st.session_state[f"{prefix_key}_equipe"] = st.selectbox("ÉQUIPE", options=["Équipe1", "Équipe2", "Équipe3", "Équipe Nuit"])
         st.session_state[f"{prefix_key}_semaine"] = st.number_input("SEMAINE (ISO)", value=datetime.now().isocalendar()[1], min_value=1, max_value=53)
         st.session_state[f"{prefix_key}_annee"] = st.number_input("ANNÉE", value=datetime.now().year, min_value=2020, max_value=2035)
@@ -787,7 +816,6 @@ else:
                     st.markdown("---")
 
             if st.button("✅ Valider et Terminer l'Audit", use_container_width=True):
-                # Vérification si toutes les questions ont été répondues
                 reponses = st.session_state[reponses_key]
                 non_repondues = [idx for idx, rep in reponses.items() if rep["statut"] is None]
 
@@ -822,10 +850,12 @@ else:
             </div>
         """, unsafe_allow_html=True)
 
+        lbl_card = "ÉQUIPEMENT / MACHINE" if type_code == "AM" else "ZONE / ÎLOT"
+
         st.markdown(f"""
             <div class="info-grid">
                 <div class="info-card"><div class="info-label">AUDITEUR</div><div class="info-val">{auditeur}</div></div>
-                <div class="info-card"><div class="info-label">ZONE / ÎLOT</div><div class="info-val">{zone}</div></div>
+                <div class="info-card"><div class="info-label">{lbl_card}</div><div class="info-val">{zone}</div></div>
                 <div class="info-card"><div class="info-label">ÉQUIPE</div><div class="info-val">{equipe}</div></div>
                 <div class="info-card"><div class="info-label">PÉRIODE</div><div class="info-val">Semaine {semaine} / {annee}</div></div>
             </div>
