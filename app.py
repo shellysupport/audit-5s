@@ -1,10 +1,4 @@
-import sys
-import os
-
-# Create full standalone script for Streamlit 5S & Auto Maintenance (AM) Audit Application
-# with database schema, PDF generation, email sending, audit forms, history with click-to-regenerate PDF, and admin panel.
-
-code_content = '''import streamlit as st
+import streamlit as st
 import pandas as pd
 import sqlite3
 import datetime
@@ -173,10 +167,6 @@ if "admin_authenticated" not in st.session_state:
 # 3. GÉNÉRATION DE RAPPORT PDF (WEASYPRINT)
 # ==========================================
 def generate_pdf_report(audit_info, details_list):
-    """
-    Génère un PDF professionnel à partir des données de l'audit et de ses détails.
-    """
-    # Conversion des images en Base64 pour le HTML
     details_html_rows = ""
     for d in details_list:
         status_color = "#2e7d32" if d["statut"] == "OK" else "#c62828"
@@ -775,9 +765,3 @@ elif page == "⚙️ Paramètres / Administration":
                 conn.commit()
                 conn.close()
                 st.success("Mot de passe mis à jour !")
-'''
-
-with open("app.py", "w", encoding="utf-8") as f:
-    f.write(code_content)
-
-print("Code written to app.py successfully.")
