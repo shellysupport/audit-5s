@@ -419,7 +419,7 @@ if "admin_authenticated" not in st.session_state:
 # ==============================================================================
 # PAGE : HISTORIQUE DES AUDITS
 # ==============================================================================
-if page == "📊 Historique des Audits":
+elif page == "📊 Historique des Audits":
     st.title("📊 Historique des Audits Réalisés")
 
     conn = get_db_connection()
@@ -438,7 +438,7 @@ if page == "📊 Historique des Audits":
         filtered_df = df_history[
             (df_history['type_audit'].isin(type_filter)) & 
             (df_history['zone'].isin(zone_filter))
-        ]
+        ].reset_index(drop=True)
 
         kpi1, kpi2, kpi3 = st.columns(3)
         kpi1.metric("Nombre total d'audits", len(filtered_df))
@@ -448,6 +448,7 @@ if page == "📊 Historique des Audits":
 
         st.markdown("---")
 
+        # Préparation du dataframe pour l'affichage
         df_display = filtered_df.rename(columns={
             'idp': 'IDP',
             'type_audit': 'Type Audit',
@@ -474,12 +475,70 @@ if page == "📊 Historique des Audits":
                 use_container_width=True
             )
 
-        st.dataframe(
+        st.caption("👇 **Cliquez sur une ligne du tableau** pour générer et télécharger le rapport PDF correspondant.")
+
+        # --- TABLEAU INTERACTIF (Sélection de ligne) ---
+        event = st.dataframe(
             df_display[['IDP', 'Type Audit', 'Auditeur', 'Zone / Équipement', 'Équipe', 'Semaine', 'Année', 'Date & Heure', 'Résultat (%)', 'OK', 'NOK']],
             use_container_width=True,
-            hide_index=True
+            hide_index=True,
+            on_select="rerun",
+            selection_mode="single-row"
         )
 
+        # --- GÉNÉRATION DYNAMIQUE BASÉE SUR LA LIGNE SÉLECTIONNÉE ---
+        selected_rows = event.selection.rows if event else []
+
+        if selected_rows:
+            # Récupération de l'index de la ligne sélectionnée
+            row_idx = selected_rows[0]
+            selected_row = filtered_df.iloc[row_idx]
+            
+            type_code = selected_row['type_audit']
+            audit_title_pdf = f"Audit {type_code} Hebdo" if type_code == "5S" else "Audit Auto Maintenance"
+            
+            q_dict = get_questions_dict(type_code)
+            
+            total_q = int(selected_row['total_questions'])
+            nb_ok = int(selected_row['nb_ok'])
+            
+            reponses_regen = {}
+            idx = 1
+            for cat, questions in q_dict.items():
+                for _ in questions:
+                    statut = "✓ OK / Conforme" if idx <= nb_ok else "✕ NOK / Non conforme"
+                    reponses_regen[idx] = {"statut": statut, "comment": ""}
+                    idx += 1
+
+            pdf_regen_bytes = generate_pdf_report(
+                audit_title_pdf,
+                selected_row['idp'],
+                selected_row['auditeur'],
+                selected_row['zone'],
+                selected_row['equipe'],
+                selected_row['semaine'],
+                selected_row['annee'],
+                reponses_regen,
+                q_dict,
+                selected_row['score_pourcentage'],
+                selected_row['nb_ok'],
+                selected_row['nb_nok'],
+                total_q
+            )
+
+            st.success(f"📌 Audit sélectionné : **#{selected_row['idp']}** ({selected_row['type_audit']} - {selected_row['zone']} - S{selected_row['semaine']})")
+            
+            st.download_button(
+                label=f"📄 Télécharger le Rapport PDF de l'audit #{selected_row['idp']}",
+                data=pdf_regen_bytes,
+                file_name=f"Rapport_{type_code}_{selected_row['zone']}_S{selected_row['semaine']}.pdf",
+                mime="application/pdf",
+                type="primary",
+                use_container_width=True
+            )
+        else:
+            st.info("💡 Cliquez sur n'importe quelle ligne dans le tableau ci-dessus pour faire apparaître son bouton de téléchargement PDF.")
+            
 # ==============================================================================
 # PAGE : PARAMÈTRES / ADMIN
 # ==============================================================================
