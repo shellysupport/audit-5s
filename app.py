@@ -25,7 +25,6 @@ def init_db():
     conn = get_db_connection()
     c = conn.cursor()
     
-    # Table Historique avec ajout de la colonne details_reponses pour garder le vrai détail des questions
     c.execute("""
         CREATE TABLE IF NOT EXISTS historique_audits (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -45,12 +44,6 @@ def init_db():
         )
     """)
     
-    # Migration auto si la colonne details_reponses n'existe pas encore
-    c.execute("PRAGMA table_info(historique_audits)")
-    columns = [column[1] for column in c.fetchall()]
-    if "details_reponses" not in columns:
-        c.execute("ALTER TABLE historique_audits ADD COLUMN details_reponses TEXT")
-
     c.execute("CREATE TABLE IF NOT EXISTS questions (id INTEGER PRIMARY KEY AUTOINCREMENT, type_audit TEXT, categorie TEXT, intitule TEXT)")
     c.execute("CREATE TABLE IF NOT EXISTS auditeurs (id INTEGER PRIMARY KEY AUTOINCREMENT, nom TEXT)")
     c.execute("CREATE TABLE IF NOT EXISTS zones (id INTEGER PRIMARY KEY AUTOINCREMENT, nom TEXT)")
@@ -69,55 +62,28 @@ def init_db():
     for cle, val in configs_defaut:
         c.execute("INSERT OR IGNORE INTO config (cle, valeur) VALUES (?, ?)", (cle, val))
 
+    # --- DONNÉES PAR DÉFAUT (SI LA BDD EST VIDE) ---
+    c.execute("SELECT COUNT(*) FROM questions")
+    if c.fetchone()[0] == 0:
+        seed_default_questions(c)
+
+    c.execute("SELECT COUNT(*) FROM auditeurs")
+    if c.fetchone()[0] == 0:
+        for aud in ["Yosri", "Auditeur 1", "Auditeur 2"]:
+            c.execute("INSERT INTO auditeurs (nom) VALUES (?)", (aud,))
+
+    c.execute("SELECT COUNT(*) FROM zones")
+    if c.fetchone()[0] == 0:
+        for z in ["Zone Assemblage", "Zone Usinage", "Magasin", "Zone EXP"]:
+            c.execute("INSERT INTO zones (nom) VALUES (?)", (z,))
+
+    c.execute("SELECT COUNT(*) FROM equipements")
+    if c.fetchone()[0] == 0:
+        for eq in ["FI506", "FI507", "Machine A1", "Ligne B2"]:
+            c.execute("INSERT INTO equipements (nom) VALUES (?)", (eq,))
+
     conn.commit()
     conn.close()
-
-init_db()
-
-# --- FONCTIONS UTILITAIRES BDD ---
-def get_config_val(cle):
-    conn = get_db_connection()
-    res = conn.execute("SELECT valeur FROM config WHERE cle = ?", (cle,)).fetchone()
-    conn.close()
-    return res['valeur'] if res else ""
-
-def set_config_val(cle, valeur):
-    conn = get_db_connection()
-    conn.execute("INSERT OR REPLACE INTO config (cle, valeur) VALUES (?, ?)", (cle, valeur))
-    conn.commit()
-    conn.close()
-
-def get_items(table):
-    conn = get_db_connection()
-    res = conn.execute(f"SELECT * FROM {table} ORDER BY id ASC").fetchall()
-    conn.close()
-    return res
-
-def add_item(table, cols, vals):
-    conn = get_db_connection()
-    placeholders = ", ".join(["?"] * len(vals))
-    cols_str = ", ".join(cols)
-    conn.execute(f"INSERT INTO {table} ({cols_str}) VALUES ({placeholders})", vals)
-    conn.commit()
-    conn.close()
-
-def delete_item(table, item_id):
-    conn = get_db_connection()
-    conn.execute(f"DELETE FROM {table} WHERE id = ?", (item_id,))
-    conn.commit()
-    conn.close()
-
-def get_questions_dict(type_audit):
-    conn = get_db_connection()
-    rows = conn.execute("SELECT categorie, intitule FROM questions WHERE type_audit = ? ORDER BY id ASC", (type_audit,)).fetchall()
-    conn.close()
-    q_dict = {}
-    for r in rows:
-        cat = r['categorie']
-        if cat not in q_dict:
-            q_dict[cat] = []
-        q_dict[cat].append(r['intitule'])
-    return q_dict
 
 def seed_default_questions(cursor):
     q_5s = {
@@ -177,6 +143,53 @@ def seed_default_questions(cursor):
     for cat, qs in q_am.items():
         for q in qs:
             cursor.execute("INSERT INTO questions (type_audit, categorie, intitule) VALUES ('AM', ?, ?)", (cat, q))
+
+init_db()
+
+# --- FONCTIONS UTILITAIRES BDD ---
+def get_config_val(cle):
+    conn = get_db_connection()
+    res = conn.execute("SELECT valeur FROM config WHERE cle = ?", (cle,)).fetchone()
+    conn.close()
+    return res['valeur'] if res else ""
+
+def set_config_val(cle, valeur):
+    conn = get_db_connection()
+    conn.execute("INSERT OR REPLACE INTO config (cle, valeur) VALUES (?, ?)", (cle, valeur))
+    conn.commit()
+    conn.close()
+
+def get_items(table):
+    conn = get_db_connection()
+    res = conn.execute(f"SELECT * FROM {table} ORDER BY id ASC").fetchall()
+    conn.close()
+    return res
+
+def add_item(table, cols, vals):
+    conn = get_db_connection()
+    placeholders = ", ".join(["?"] * len(vals))
+    cols_str = ", ".join(cols)
+    conn.execute(f"INSERT INTO {table} ({cols_str}) VALUES ({placeholders})", vals)
+    conn.commit()
+    conn.close()
+
+def delete_item(table, item_id):
+    conn = get_db_connection()
+    conn.execute(f"DELETE FROM {table} WHERE id = ?", (item_id,))
+    conn.commit()
+    conn.close()
+
+def get_questions_dict(type_audit):
+    conn = get_db_connection()
+    rows = conn.execute("SELECT categorie, intitule FROM questions WHERE type_audit = ? ORDER BY id ASC", (type_audit,)).fetchall()
+    conn.close()
+    q_dict = {}
+    for r in rows:
+        cat = r['categorie']
+        if cat not in q_dict:
+            q_dict[cat] = []
+        q_dict[cat].append(r['intitule'])
+    return q_dict
 
 # --- GENERATION PDF ---
 def generate_pdf_report(audit_title, idp, auditeur, zone, equipe, semaine, annee, reponses, q_dict, score_pct, nb_ok, nb_nok, total_q):
@@ -262,7 +275,6 @@ def convert_df_to_excel(df):
         df.to_excel(writer, index=False, sheet_name='Audits')
     return output.getvalue()
 
-
 # ==============================================================================
 # SESSION STATE & INITIALISATION
 # ==============================================================================
@@ -275,7 +287,6 @@ if 'admin_authenticated' not in st.session_state:
 st.sidebar.title("📌 Menu Principal")
 page = st.sidebar.radio("Navigation", ["📝 Réaliser un Audit", "📊 Historique des Audits", "⚙️ Paramètres / Admin"])
 
-
 # ==============================================================================
 # PAGE : RÉALISER UN AUDIT
 # ==============================================================================
@@ -287,11 +298,6 @@ if page == "📝 Réaliser un Audit":
     auditeurs_list = [a['nom'] for a in get_items("auditeurs")]
     zones_list = [z['nom'] for z in get_items("zones")]
     equipements_list = [e['nom'] for e in get_items("equipements")]
-
-    if audit_type == "5S" and not zones_list:
-        st.warning("⚠️ Aucune zone enregistrée dans les paramètres. Veuillez en ajouter.")
-    if audit_type == "AM" and not equipements_list:
-        st.warning("⚠️ Aucun équipement enregistré dans les paramètres. Veuillez en ajouter.")
 
     st.markdown("### 📋 Informations Générales")
     c1, c2, c3 = st.columns(3)
@@ -318,7 +324,7 @@ if page == "📝 Réaliser un Audit":
     q_index = 1
 
     if not q_dict:
-        st.error("Aucune question trouvée pour cet audit. Allez dans Paramètres pour les réinitialiser ou ajouter.")
+        st.error("Aucune question trouvée. Allez dans Paramètres pour réinitialiser les questions.")
     else:
         for cat, questions in q_dict.items():
             st.subheader(f"📌 {cat}")
@@ -343,7 +349,6 @@ if page == "📝 Réaliser un Audit":
             c = conn.cursor()
             date_str = datetime.now().strftime("%Y-%m-%d %H:%M")
             
-            # Sauvegarde en JSON du détail réel des réponses pour conserver l'exactitude
             details_json = json.dumps(reponses)
 
             c.execute("""
@@ -355,9 +360,8 @@ if page == "📝 Réaliser un Audit":
             conn.commit()
             conn.close()
 
-            st.success("✅ Audit enregistré avec succès dans l'historique !")
+            st.success("✅ Audit enregistré avec succès !")
 
-            # Génération du rapport PDF instantané
             audit_title_pdf = "Audit 5S Hebdo" if audit_type == "5S" else "Audit Auto Maintenance"
             pdf_bytes = generate_pdf_report(audit_title_pdf, idp_input, auditeur_selected, zone_selected, equipe_selected, semaine_selected, annee_selected, reponses, q_dict, score_pct, nb_ok, nb_nok, total_questions)
 
@@ -367,7 +371,6 @@ if page == "📝 Réaliser un Audit":
                 file_name=f"Rapport_{audit_type}_{zone_selected}_S{semaine_selected}.pdf",
                 mime="application/pdf"
             )
-
 
 # ==============================================================================
 # PAGE : HISTORIQUE DES AUDITS
@@ -429,7 +432,6 @@ elif page == "📊 Historique des Audits":
 
         st.caption("👇 **Cliquez sur une ligne du tableau** pour générer et télécharger le rapport PDF correspondant.")
 
-        # --- TABLEAU INTERACTIF (Sélection de ligne) ---
         event = st.dataframe(
             df_display[['IDP', 'Type Audit', 'Auditeur', 'Zone / Équipement', 'Équipe', 'Semaine', 'Année', 'Date & Heure', 'Résultat (%)', 'OK', 'NOK']],
             use_container_width=True,
@@ -451,7 +453,6 @@ elif page == "📊 Historique des Audits":
             total_q = int(selected_row['total_questions'])
             nb_ok = int(selected_row['nb_ok'])
             
-            # --- LECTURE EXACDE DU DÉTAIL DES RÉPONSES ---
             reponses_regen = {}
             if 'details_reponses' in selected_row and pd.notnull(selected_row['details_reponses']):
                 try:
@@ -460,7 +461,6 @@ elif page == "📊 Historique des Audits":
                 except Exception:
                     reponses_regen = {}
 
-            # Fallback de secours uniquement si l'audit est très ancien et n'a pas le JSON
             if not reponses_regen:
                 idx = 1
                 for cat, questions in q_dict.items():
@@ -497,7 +497,6 @@ elif page == "📊 Historique des Audits":
             )
         else:
             st.info("💡 Cliquez sur n'importe quelle ligne dans le tableau ci-dessus pour faire apparaître son bouton de téléchargement PDF.")
-
 
 # ==============================================================================
 # PAGE : PARAMÈTRES / ADMIN
