@@ -34,83 +34,99 @@ def get_db_connection():
 
 def init_db():
     conn = get_db_connection()
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS auditeurs (id INTEGER PRIMARY KEY AUTOINCREMENT, nom TEXT UNIQUE NOT NULL)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS zones (id INTEGER PRIMARY KEY AUTOINCREMENT, nom TEXT UNIQUE NOT NULL)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS equipements (id INTEGER PRIMARY KEY AUTOINCREMENT, nom TEXT UNIQUE NOT NULL)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS emails (id INTEGER PRIMARY KEY AUTOINCREMENT, label TEXT NOT NULL, email TEXT UNIQUE NOT NULL)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT NOT NULL)''')
-    
-    c.execute('''CREATE TABLE IF NOT EXISTS historique_audits (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        idp TEXT,
-        type_audit TEXT NOT NULL,
-        auditeur TEXT NOT NULL,
-        zone TEXT NOT NULL,
-        equipe TEXT,
-        semaine INTEGER,
-        annee INTEGER,
-        date_audit TEXT,
-        score_pourcentage REAL,
-        nb_ok INTEGER,
-        nb_nok INTEGER,
-        total_questions INTEGER,
-        details_json TEXT,
-        appareil TEXT
-    )''')
+    with conn.session as s:
+        s.execute("""
+            CREATE TABLE IF NOT EXISTS auditeurs (
+                id SERIAL PRIMARY KEY, 
+                nom TEXT UNIQUE NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS zones (
+                id SERIAL PRIMARY KEY, 
+                nom TEXT UNIQUE NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS equipements (
+                id SERIAL PRIMARY KEY, 
+                nom TEXT UNIQUE NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS emails (
+                id SERIAL PRIMARY KEY, 
+                label TEXT NOT NULL, 
+                email TEXT UNIQUE NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS config (
+                key TEXT PRIMARY KEY, 
+                value TEXT NOT NULL
+            );
+            
+            CREATE TABLE IF NOT EXISTS historique_audits (
+                id SERIAL PRIMARY KEY,
+                idp TEXT,
+                type_audit TEXT NOT NULL,
+                auditeur TEXT NOT NULL,
+                zone TEXT NOT NULL,
+                equipe TEXT,
+                semaine INTEGER,
+                annee INTEGER,
+                date_audit TEXT,
+                score_pourcentage REAL,
+                nb_ok INTEGER,
+                nb_nok INTEGER,
+                total_questions INTEGER,
+                details_json TEXT,
+                appareil TEXT
+            );
+            
+            CREATE TABLE IF NOT EXISTS questions (
+                id SERIAL PRIMARY KEY, 
+                type_audit TEXT NOT NULL, 
+                categorie TEXT NOT NULL, 
+                intitule TEXT NOT NULL,
+                ordre INTEGER DEFAULT 0
+            );
+        """)
+        s.commit()
 
-    try:
-        c.execute("ALTER TABLE historique_audits ADD COLUMN details_json TEXT")
-    except sqlite3.OperationalError:
-        pass
+    # Ajout sécurisé des colonnes si elles n'existent pas
+    with conn.session as s:
+        s.execute("ALTER TABLE historique_audits ADD COLUMN IF NOT EXISTS details_json TEXT;")
+        s.execute("ALTER TABLE historique_audits ADD COLUMN IF NOT EXISTS appareil TEXT;")
+        s.commit()
 
-    try:
-        c.execute("ALTER TABLE historique_audits ADD COLUMN appareil TEXT")
-    except sqlite3.OperationalError:
-        pass
+    # Initialisation des données par défaut si tables vides
+    with conn.session as s:
+        res = s.execute("SELECT COUNT(*) FROM auditeurs").fetchone()
+        if res[0] == 0:
+            s.execute("INSERT INTO auditeurs (nom) VALUES ('BESSEM FEKIH'), ('Yosri Fadhly') ON CONFLICT DO NOTHING")
+            
+        res = s.execute("SELECT COUNT(*) FROM zones").fetchone()
+        if res[0] == 0:
+            s.execute("INSERT INTO zones (nom) VALUES ('AUTOMATISME'), ('LIGNE 1'), ('UPS') ON CONFLICT DO NOTHING")
 
-    c.execute('''CREATE TABLE IF NOT EXISTS questions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, 
-        type_audit TEXT NOT NULL, 
-        categorie TEXT NOT NULL, 
-        intitule TEXT NOT NULL,
-        ordre INTEGER DEFAULT 0
-    )''')
-    
-    c.execute("SELECT COUNT(*) FROM auditeurs")
-    if c.fetchone()[0] == 0:
-        c.executemany("INSERT INTO auditeurs (nom) VALUES (?)", [("BESSEM FEKIH",), ("Yosri Fadhly",)])
-        
-    c.execute("SELECT COUNT(*) FROM zones")
-    if c.fetchone()[0] == 0:
-        c.executemany("INSERT INTO zones (nom) VALUES (?)", [("AUTOMATISME",), ("LIGNE 1",), ("UPS",)])
+        res = s.execute("SELECT COUNT(*) FROM equipements").fetchone()
+        if res[0] == 0:
+            s.execute("INSERT INTO equipements (nom) VALUES ('FI506'), ('FI507'), ('Robot de Soudure 02') ON CONFLICT DO NOTHING")
 
-    c.execute("SELECT COUNT(*) FROM equipements")
-    if c.fetchone()[0] == 0:
-        c.executemany("INSERT INTO equipements (nom) VALUES (?)", [("FI506",), ("FI507",), ("Robot de Soudure 02",)])
+        res = s.execute("SELECT COUNT(*) FROM emails").fetchone()
+        if res[0] == 0:
+            s.execute("INSERT INTO emails (label, email) VALUES ('Responsable Atelier', 'yosri.fadhly@somfy.com') ON CONFLICT DO NOTHING")
 
-    c.execute("SELECT COUNT(*) FROM emails")
-    if c.fetchone()[0] == 0:
-        c.executemany("INSERT INTO emails (label, email) VALUES (?, ?)", [("Responsable Atelier", "yosri.fadhly@somfy.com"),])
+        default_config = {
+            "admin_password": "admin",
+            "smtp_server": "smtp.gmail.com",
+            "smtp_port": "587",
+            "smtp_user": "yosri.fadhly@gmail.com",
+            "smtp_password": "rzftdozwqntssiwa"
+        }
+        for k, v in default_config.items():
+            s.execute("INSERT INTO config (key, value) VALUES (:key, :val) ON CONFLICT (key) DO NOTHING", {"key": k, "val": v})
 
-    default_config = {
-        "admin_password": "admin",
-        "smtp_server": "smtp.gmail.com",
-        "smtp_port": "587",
-        "smtp_user": "yosri.fadhly@gmail.com",
-        "smtp_password": "rzftdozwqntssiwa"
-    }
-    for k, v in default_config.items():
-        c.execute("INSERT OR IGNORE INTO config (key, value) VALUES (?, ?)", (k, v))
+        res = s.execute("SELECT COUNT(*) FROM questions").fetchone()
+        if res[0] == 0:
+            seed_default_questions(s)
 
-    c.execute("SELECT COUNT(*) FROM questions")
-    if c.fetchone()[0] == 0:
-        seed_default_questions(c)
+        s.commit()
 
-    conn.commit()
-    conn.close()
-
-def seed_default_questions(cursor):
+def seed_default_questions(session):
     q_5s = [
         ("S1 – DÉBARRASSER", "Est-ce qu'il y a du matériel / fournitures / machines / équipement Inutiles ?"),
         ("S1 – DÉBARRASSER", "Est-ce qu'il y a du matériel / fourniture / machines / équipement Endommagé ?"),
@@ -125,7 +141,7 @@ def seed_default_questions(cursor):
         ("S5 – MAINTENIR", "Quelles sont les dernières actions réalisées par le GAP ?")
     ]
     for cat, q in q_5s:
-        cursor.execute("INSERT INTO questions (type_audit, categorie, intitule) VALUES (?, ?, ?)", ("5S", cat, q))
+        session.execute("INSERT INTO questions (type_audit, categorie, intitule) VALUES ('5S', :cat, :q)", {"cat": cat, "q": q})
 
     q_am = [
         ("État du poste de travail", "Le management visuel est présent et en place."),
@@ -146,76 +162,91 @@ def seed_default_questions(cursor):
         ("Traçabilité et Enregistrement", "Les actions issues des audits AM précédents sont suivis en SIM PROD et clôturées.")
     ]
     for cat, q in q_am:
-        cursor.execute("INSERT INTO questions (type_audit, categorie, intitule) VALUES (?, ?, ?)", ("AM", cat, q))
+        session.execute("INSERT INTO questions (type_audit, categorie, intitule) VALUES ('AM', :cat, :q)", {"cat": cat, "q": q})
 
 init_db()
 
 def get_config_val(key):
     conn = get_db_connection()
-    res = conn.execute("SELECT value FROM config WHERE key = ?", (key,)).fetchone()
-    conn.close()
-    return res['value'] if res else ""
+    df = conn.query("SELECT value FROM config WHERE key = :key;", params={"key": key}, ttl=0)
+    if not df.empty:
+        return df.iloc[0]['value']
+    return ""
 
 def set_config_val(key, value):
     conn = get_db_connection()
-    conn.execute("INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)", (key, value))
-    conn.commit()
-    conn.close()
+    with conn.session as s:
+        s.execute("INSERT INTO config (key, value) VALUES (:key, :val) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;", {"key": key, "val": value})
+        s.commit()
 
 def get_items(table):
     conn = get_db_connection()
-    items = conn.execute(f"SELECT * FROM {table}").fetchall()
-    conn.close()
-    return items
+    df = conn.query(f"SELECT * FROM {table} ORDER BY id ASC;", ttl=0)
+    return df.to_dict(orient="records")
 
 def add_item(table, columns, values):
     conn = get_db_connection()
-    placeholders = ", ".join(["?"] * len(values))
-    cols = ", ".join(columns)
+    cols_str = ", ".join(columns)
+    params = {f"v{i}": val for i, val in enumerate(values)}
+    placeholders = ", ".join([f":v{i}" for i in range(len(values))])
+    
     try:
-        conn.execute(f"INSERT INTO {table} ({cols}) VALUES ({placeholders})", values)
-        conn.commit()
+        with conn.session as s:
+            s.execute(f"INSERT INTO {table} ({cols_str}) VALUES ({placeholders})", params)
+            s.commit()
         st.toast("✅ Ajouté avec succès !")
-    except sqlite3.IntegrityError:
-        st.error("⚠️ Cet élément existe déjà.")
-    finally:
-        conn.close()
+    except Exception as e:
+        st.error(f"⚠️ Cet élément existe déjà ou une erreur est survenue : {e}")
 
 def delete_item(table, item_id):
     conn = get_db_connection()
-    conn.execute(f"DELETE FROM {table} WHERE id = ?", (item_id,))
-    conn.commit()
-    conn.close()
+    with conn.session as s:
+        s.execute(f"DELETE FROM {table} WHERE id = :id", {"id": item_id})
+        s.commit()
 
 def save_audit_in_history(idp, type_audit, auditeur, zone, equipe, semaine, annee, score, nb_ok, nb_nok, total_q, reponses_dict_raw, appareil):
     conn = get_db_connection()
-    c = conn.cursor()
-    c.execute("SELECT id FROM historique_audits WHERE idp = ?", (idp,))
-    if c.fetchone() is None:
-        date_str = datetime.now().strftime("%Y-%m-%d %H:%M")
-        
-        serializable_reponses = {}
-        for k, v in reponses_dict_raw.items():
-            serializable_reponses[str(k)] = {
-                "statut": v.get("statut"),
-                "comment": v.get("comment", "")
-            }
-        details_str = json.dumps(serializable_reponses)
+    with conn.session as s:
+        existing = s.execute("SELECT id FROM historique_audits WHERE idp = :idp", {"idp": idp}).fetchone()
+        if existing is None:
+            date_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+            
+            serializable_reponses = {}
+            for k, v in reponses_dict_raw.items():
+                serializable_reponses[str(k)] = {
+                    "statut": v.get("statut"),
+                    "comment": v.get("comment", "")
+                }
+            details_str = json.dumps(serializable_reponses)
 
-        c.execute('''INSERT INTO historique_audits 
-                    (idp, type_audit, auditeur, zone, equipe, semaine, annee, date_audit, score_pourcentage, nb_ok, nb_nok, total_questions, details_json, appareil)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
-                  (idp, type_audit, auditeur, zone, equipe, semaine, annee, date_str, score, nb_ok, nb_nok, total_q, details_str, appareil))
-        conn.commit()
-    conn.close()
+            s.execute("""
+                INSERT INTO historique_audits 
+                (idp, type_audit, auditeur, zone, equipe, semaine, annee, date_audit, score_pourcentage, nb_ok, nb_nok, total_questions, details_json, appareil)
+                VALUES (:idp, :type_audit, :auditeur, :zone, :equipe, :semaine, :annee, :date_audit, :score, :nb_ok, :nb_nok, :total_q, :details_json, :appareil)
+            """, {
+                "idp": idp,
+                "type_audit": type_audit,
+                "auditeur": auditeur,
+                "zone": zone,
+                "equipe": equipe,
+                "semaine": semaine,
+                "annee": annee,
+                "date_audit": date_str,
+                "score": score,
+                "nb_ok": nb_ok,
+                "nb_nok": nb_nok,
+                "total_q": total_q,
+                "details_json": details_str,
+                "appareil": appareil
+            })
+            s.commit()
 
 def get_questions_with_ids(type_audit):
     conn = get_db_connection()
-    rows = conn.execute("SELECT id, categorie, intitule FROM questions WHERE type_audit = ? ORDER BY id ASC", (type_audit,)).fetchall()
-    conn.close()
+    df = conn.query("SELECT id, categorie, intitule FROM questions WHERE type_audit = :type_audit ORDER BY id ASC", params={"type_audit": type_audit}, ttl=0)
     
     questions_dict = {}
-    for r in rows:
+    for _, r in df.iterrows():
         cat = r['categorie']
         if cat not in questions_dict:
             questions_dict[cat] = []
@@ -224,11 +255,10 @@ def get_questions_with_ids(type_audit):
 
 def get_questions_dict(type_audit):
     conn = get_db_connection()
-    rows = conn.execute("SELECT categorie, intitule FROM questions WHERE type_audit = ? ORDER BY id ASC", (type_audit,)).fetchall()
-    conn.close()
+    df = conn.query("SELECT categorie, intitule FROM questions WHERE type_audit = :type_audit ORDER BY id ASC", params={"type_audit": type_audit}, ttl=0)
     
     questions_dict = {}
-    for r in rows:
+    for _, r in df.iterrows():
         cat = r['categorie']
         if cat not in questions_dict:
             questions_dict[cat] = []
@@ -412,8 +442,7 @@ if page == "📊 Historique des Audits":
     st.title("📊 Historique des Audits Réalisés")
 
     conn = get_db_connection()
-    df_history = pd.read_sql_query("SELECT * FROM historique_audits ORDER BY id DESC", conn)
-    conn.close()
+    df_history = conn.query("SELECT * FROM historique_audits ORDER BY id DESC", ttl=0)
 
     if df_history.empty:
         st.info("Aucun audit n'a encore été enregistré dans l'historique.")
@@ -437,7 +466,6 @@ if page == "📊 Historique des Audits":
 
         st.markdown("---")
         
-        # Bouton d'export Excel placé juste avant le tableau
         excel_data = convert_df_to_excel(filtered_df[['idp', 'type_audit', 'auditeur', 'zone', 'equipe', 'semaine', 'annee', 'date_audit', 'score_pourcentage', 'nb_ok', 'nb_nok', 'total_questions', 'appareil']])
         st.download_button(
             label="📥 Exporter l'historique vers Excel",
@@ -482,13 +510,6 @@ if page == "📊 Historique des Audits":
                     mime="application/pdf",
                     use_container_width=True
                 )
-
-
-
-
-
-                    
-                
             else:
                 st.warning("Détails non disponibles pour cet ancien audit.")
 
@@ -520,10 +541,10 @@ elif page == "⚙️ Paramètres / Admin":
         with tab1:
             st.subheader("🛠️ Gérer / Modifier l'Historique des Audits")
             conn = get_db_connection()
-            df_audits = pd.read_sql_query("SELECT * FROM historique_audits ORDER BY id DESC", conn)
+            df_audits = conn.query("SELECT * FROM historique_audits ORDER BY id DESC", ttl=0)
+            
             if df_audits.empty:
                 st.info("Aucun audit à modifier.")
-                conn.close()
             else:
                 selected_id = st.selectbox("Sélectionnez l'audit à modifier :", options=df_audits['id'], format_func=lambda x: f"ID #{x}")
                 row_data = df_audits[df_audits['id'] == selected_id].iloc[0]
@@ -542,23 +563,40 @@ elif page == "⚙️ Paramètres / Admin":
                     if submitted_save:
                         new_total = e_ok + e_nok
                         new_score = round((e_ok / new_total * 100), 1) if new_total > 0 else 0
-                        conn.execute("UPDATE historique_audits SET type_audit=?, auditeur=?, zone=?, equipe=?, semaine=?, annee=?, nb_ok=?, nb_nok=?, total_questions=?, score_pourcentage=? WHERE id=?", 
-                                     (e_type, e_auditeur, e_zone, e_equipe, e_semaine, e_annee, e_ok, e_nok, new_total, new_score, selected_id))
-                        conn.commit()
-                        conn.close()
+                        
+                        with conn.session as s:
+                            s.execute("""
+                                UPDATE historique_audits 
+                                SET type_audit = :type_audit, auditeur = :auditeur, zone = :zone, 
+                                    equipe = :equipe, semaine = :semaine, annee = :annee, 
+                                    nb_ok = :nb_ok, nb_nok = :nb_nok, total_questions = :total_questions, 
+                                    score_pourcentage = :score_pourcentage 
+                                WHERE id = :id
+                            """, {
+                                "type_audit": e_type,
+                                "auditeur": e_auditeur,
+                                "zone": e_zone,
+                                "equipe": e_equipe,
+                                "semaine": e_semaine,
+                                "annee": e_annee,
+                                "nb_ok": e_ok,
+                                "nb_nok": e_nok,
+                                "total_questions": new_total,
+                                "score_pourcentage": new_score,
+                                "id": selected_id
+                            })
+                            s.commit()
+                            
                         st.success("Modifications enregistrées !")
                         st.rerun()
 
                 st.markdown("---")
-                # Bouton de suppression de l'audit sélectionné
                 if st.button("🗑️ Supprimer cet audit définitivement", type="primary", use_container_width=True):
-                    conn.execute("DELETE FROM historique_audits WHERE id = ?", (selected_id,))
-                    conn.commit()
-                    conn.close()
+                    with conn.session as s:
+                        s.execute("DELETE FROM historique_audits WHERE id = :id", {"id": selected_id})
+                        s.commit()
                     st.success(f"Audit #{selected_id} supprimé avec succès !")
                     st.rerun()
-
-                if conn: conn.close()
 
         with tab2:
             st.subheader("📝 Modifier les Checklists")
@@ -705,7 +743,6 @@ else:
         annee = st.session_state.get(f"{prefix_key}_annee", 2026)
         idp = st.session_state.get(idp_key, "N/A")
 
-        # Récupération de l'appareil (User-Agent)
         headers = getattr(st, "context", None) and getattr(st.context, "headers", None)
         appareil = headers.get("User-Agent", "Inconnu") if headers else "Inconnu"
 
@@ -737,7 +774,7 @@ else:
         with col_email:
             st.subheader("📧 Envoi par e-mail")
             if db_emails:
-                email_list = [e['email']  for e in db_emails]
+                email_list = [e['email'] for e in db_emails]
                 selected_emails = st.multiselect("Destinataires :", options=email_list, default=email_list)
                 if st.button("📤 Envoyer le rapport", use_container_width=True):
                     success, msg = send_email_with_pdf(pdf_bytes, audit_title, idp, auditeur, zone, equipe, semaine, annee, taux, nb_ok, nb_nok, total_questions, selected_emails)
