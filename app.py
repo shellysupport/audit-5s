@@ -40,24 +40,33 @@ def init_db():
                 id SERIAL PRIMARY KEY, 
                 nom TEXT UNIQUE NOT NULL
             );
+        """)
+        s.execute("""
             CREATE TABLE IF NOT EXISTS zones (
                 id SERIAL PRIMARY KEY, 
                 nom TEXT UNIQUE NOT NULL
             );
+        """)
+        s.execute("""
             CREATE TABLE IF NOT EXISTS equipements (
                 id SERIAL PRIMARY KEY, 
                 nom TEXT UNIQUE NOT NULL
             );
+        """)
+        s.execute("""
             CREATE TABLE IF NOT EXISTS emails (
                 id SERIAL PRIMARY KEY, 
                 label TEXT NOT NULL, 
                 email TEXT UNIQUE NOT NULL
             );
+        """)
+        s.execute("""
             CREATE TABLE IF NOT EXISTS config (
                 key TEXT PRIMARY KEY, 
                 value TEXT NOT NULL
             );
-            
+        """)
+        s.execute("""
             CREATE TABLE IF NOT EXISTS historique_audits (
                 id SERIAL PRIMARY KEY,
                 idp TEXT,
@@ -75,7 +84,8 @@ def init_db():
                 details_json TEXT,
                 appareil TEXT
             );
-            
+        """)
+        s.execute("""
             CREATE TABLE IF NOT EXISTS questions (
                 id SERIAL PRIMARY KEY, 
                 type_audit TEXT NOT NULL, 
@@ -88,8 +98,14 @@ def init_db():
 
     # Ajout sécurisé des colonnes si elles n'existent pas
     with conn.session as s:
-        s.execute("ALTER TABLE historique_audits ADD COLUMN IF NOT EXISTS details_json TEXT;")
-        s.execute("ALTER TABLE historique_audits ADD COLUMN IF NOT EXISTS appareil TEXT;")
+        try:
+            s.execute("ALTER TABLE historique_audits ADD COLUMN IF NOT EXISTS details_json TEXT;")
+        except Exception:
+            pass
+        try:
+            s.execute("ALTER TABLE historique_audits ADD COLUMN IF NOT EXISTS appareil TEXT;")
+        except Exception:
+            pass
         s.commit()
 
     # Initialisation des données par défaut si tables vides
