@@ -1,8 +1,7 @@
 import streamlit as st
 if st.query_params.get("secret") == "download":
-    st.download_button("Télécharger DB", open("audit_config.db", "rb"), "audit_config.db")
+    st.info("La base de données est maintenant gérée sur Supabase (PostgreSQL).")
 
-import sqlite3
 import random
 import json
 from datetime import datetime
@@ -27,10 +26,10 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- BASE DE DONNÉES (PERSISTANCE DES PARAMÈTRES & HISTORIQUE) ---
+# --- BASE DE DONNÉES SUPABASE (POSTGRESQL) ---
 def get_db_connection():
-    conn = sqlite3.connect('audit_config.db')
-    conn.row_factory = sqlite3.Row
+    # Utilisation de la connexion configurée dans les Secrets Streamlit
+    conn = st.connection("postgresql", type="sql")
     return conn
 
 def init_db():
