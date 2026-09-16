@@ -1,4 +1,6 @@
 streamlit
-pandas
-openpyxl
+psycopg2-binary
+sqlalchemy
 reportlab
+openpyxl
+pandas
