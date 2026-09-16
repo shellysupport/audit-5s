@@ -11,6 +11,7 @@ import pandas as pd
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.application import MIMEApplication
+from sqlalchemy import text
 
 # --- REPORTLAB IMPORTS POUR LE PDF ---
 from reportlab.lib.pagesizes import letter
@@ -35,38 +36,38 @@ def get_db_connection():
 def init_db():
     conn = get_db_connection()
     with conn.session as s:
-        s.execute("""
+        s.execute(text("""
             CREATE TABLE IF NOT EXISTS auditeurs (
                 id SERIAL PRIMARY KEY, 
                 nom TEXT UNIQUE NOT NULL
             );
-        """)
-        s.execute("""
+        """))
+        s.execute(text("""
             CREATE TABLE IF NOT EXISTS zones (
                 id SERIAL PRIMARY KEY, 
                 nom TEXT UNIQUE NOT NULL
             );
-        """)
-        s.execute("""
+        """))
+        s.execute(text("""
             CREATE TABLE IF NOT EXISTS equipements (
                 id SERIAL PRIMARY KEY, 
                 nom TEXT UNIQUE NOT NULL
             );
-        """)
-        s.execute("""
+        """))
+        s.execute(text("""
             CREATE TABLE IF NOT EXISTS emails (
                 id SERIAL PRIMARY KEY, 
                 label TEXT NOT NULL, 
                 email TEXT UNIQUE NOT NULL
             );
-        """)
-        s.execute("""
+        """))
+        s.execute(text("""
             CREATE TABLE IF NOT EXISTS config (
                 key TEXT PRIMARY KEY, 
                 value TEXT NOT NULL
             );
-        """)
-        s.execute("""
+        """))
+        s.execute(text("""
             CREATE TABLE IF NOT EXISTS historique_audits (
                 id SERIAL PRIMARY KEY,
                 idp TEXT,
@@ -84,8 +85,8 @@ def init_db():
                 details_json TEXT,
                 appareil TEXT
             );
-        """)
-        s.execute("""
+        """))
+        s.execute(text("""
             CREATE TABLE IF NOT EXISTS questions (
                 id SERIAL PRIMARY KEY, 
                 type_audit TEXT NOT NULL, 
@@ -93,38 +94,38 @@ def init_db():
                 intitule TEXT NOT NULL,
                 ordre INTEGER DEFAULT 0
             );
-        """)
+        """))
         s.commit()
 
     # Ajout sécurisé des colonnes si elles n'existent pas
     with conn.session as s:
         try:
-            s.execute("ALTER TABLE historique_audits ADD COLUMN IF NOT EXISTS details_json TEXT;")
+            s.execute(text("ALTER TABLE historique_audits ADD COLUMN IF NOT EXISTS details_json TEXT;"))
         except Exception:
             pass
         try:
-            s.execute("ALTER TABLE historique_audits ADD COLUMN IF NOT EXISTS appareil TEXT;")
+            s.execute(text("ALTER TABLE historique_audits ADD COLUMN IF NOT EXISTS appareil TEXT;"))
         except Exception:
             pass
         s.commit()
 
     # Initialisation des données par défaut si tables vides
     with conn.session as s:
-        res = s.execute("SELECT COUNT(*) FROM auditeurs").fetchone()
+        res = s.execute(text("SELECT COUNT(*) FROM auditeurs")).fetchone()
         if res[0] == 0:
-            s.execute("INSERT INTO auditeurs (nom) VALUES ('BESSEM FEKIH'), ('Yosri Fadhly') ON CONFLICT DO NOTHING")
+            s.execute(text("INSERT INTO auditeurs (nom) VALUES ('BESSEM FEKIH'), ('Yosri Fadhly') ON CONFLICT DO NOTHING"))
             
-        res = s.execute("SELECT COUNT(*) FROM zones").fetchone()
+        res = s.execute(text("SELECT COUNT(*) FROM zones")).fetchone()
         if res[0] == 0:
-            s.execute("INSERT INTO zones (nom) VALUES ('AUTOMATISME'), ('LIGNE 1'), ('UPS') ON CONFLICT DO NOTHING")
+            s.execute(text("INSERT INTO zones (nom) VALUES ('AUTOMATISME'), ('LIGNE 1'), ('UPS') ON CONFLICT DO NOTHING"))
 
-        res = s.execute("SELECT COUNT(*) FROM equipements").fetchone()
+        res = s.execute(text("SELECT COUNT(*) FROM equipements")).fetchone()
         if res[0] == 0:
-            s.execute("INSERT INTO equipements (nom) VALUES ('FI506'), ('FI507'), ('Robot de Soudure 02') ON CONFLICT DO NOTHING")
+            s.execute(text("INSERT INTO equipements (nom) VALUES ('FI506'), ('FI507'), ('Robot de Soudure 02') ON CONFLICT DO NOTHING"))
 
-        res = s.execute("SELECT COUNT(*) FROM emails").fetchone()
+        res = s.execute(text("SELECT COUNT(*) FROM emails")).fetchone()
         if res[0] == 0:
-            s.execute("INSERT INTO emails (label, email) VALUES ('Responsable Atelier', 'yosri.fadhly@somfy.com') ON CONFLICT DO NOTHING")
+            s.execute(text("INSERT INTO emails (label, email) VALUES ('Responsable Atelier', 'yosri.fadhly@somfy.com') ON CONFLICT DO NOTHING"))
 
         default_config = {
             "admin_password": "admin",
@@ -134,9 +135,9 @@ def init_db():
             "smtp_password": "rzftdozwqntssiwa"
         }
         for k, v in default_config.items():
-            s.execute("INSERT INTO config (key, value) VALUES (:key, :val) ON CONFLICT (key) DO NOTHING", {"key": k, "val": v})
+            s.execute(text("INSERT INTO config (key, value) VALUES (:key, :val) ON CONFLICT (key) DO NOTHING"), {"key": k, "val": v})
 
-        res = s.execute("SELECT COUNT(*) FROM questions").fetchone()
+        res = s.execute(text("SELECT COUNT(*) FROM questions")).fetchone()
         if res[0] == 0:
             seed_default_questions(s)
 
@@ -157,7 +158,7 @@ def seed_default_questions(session):
         ("S5 – MAINTENIR", "Quelles sont les dernières actions réalisées par le GAP ?")
     ]
     for cat, q in q_5s:
-        session.execute("INSERT INTO questions (type_audit, categorie, intitule) VALUES ('5S', :cat, :q)", {"cat": cat, "q": q})
+        session.execute(text("INSERT INTO questions (type_audit, categorie, intitule) VALUES ('5S', :cat, :q)"), {"cat": cat, "q": q})
 
     q_am = [
         ("État du poste de travail", "Le management visuel est présent et en place."),
@@ -178,7 +179,7 @@ def seed_default_questions(session):
         ("Traçabilité et Enregistrement", "Les actions issues des audits AM précédents sont suivis en SIM PROD et clôturées.")
     ]
     for cat, q in q_am:
-        session.execute("INSERT INTO questions (type_audit, categorie, intitule) VALUES ('AM', :cat, :q)", {"cat": cat, "q": q})
+        session.execute(text("INSERT INTO questions (type_audit, categorie, intitule) VALUES ('AM', :cat, :q)"), {"cat": cat, "q": q})
 
 init_db()
 
@@ -192,7 +193,7 @@ def get_config_val(key):
 def set_config_val(key, value):
     conn = get_db_connection()
     with conn.session as s:
-        s.execute("INSERT INTO config (key, value) VALUES (:key, :val) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;", {"key": key, "val": value})
+        s.execute(text("INSERT INTO config (key, value) VALUES (:key, :val) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;"), {"key": key, "val": value})
         s.commit()
 
 def get_items(table):
@@ -208,7 +209,7 @@ def add_item(table, columns, values):
     
     try:
         with conn.session as s:
-            s.execute(f"INSERT INTO {table} ({cols_str}) VALUES ({placeholders})", params)
+            s.execute(text(f"INSERT INTO {table} ({cols_str}) VALUES ({placeholders})"), params)
             s.commit()
         st.toast("✅ Ajouté avec succès !")
     except Exception as e:
@@ -217,13 +218,13 @@ def add_item(table, columns, values):
 def delete_item(table, item_id):
     conn = get_db_connection()
     with conn.session as s:
-        s.execute(f"DELETE FROM {table} WHERE id = :id", {"id": item_id})
+        s.execute(text(f"DELETE FROM {table} WHERE id = :id"), {"id": item_id})
         s.commit()
 
 def save_audit_in_history(idp, type_audit, auditeur, zone, equipe, semaine, annee, score, nb_ok, nb_nok, total_q, reponses_dict_raw, appareil):
     conn = get_db_connection()
     with conn.session as s:
-        existing = s.execute("SELECT id FROM historique_audits WHERE idp = :idp", {"idp": idp}).fetchone()
+        existing = s.execute(text("SELECT id FROM historique_audits WHERE idp = :idp"), {"idp": idp}).fetchone()
         if existing is None:
             date_str = datetime.now().strftime("%Y-%m-%d %H:%M")
             
@@ -235,11 +236,11 @@ def save_audit_in_history(idp, type_audit, auditeur, zone, equipe, semaine, anne
                 }
             details_str = json.dumps(serializable_reponses)
 
-            s.execute("""
+            s.execute(text("""
                 INSERT INTO historique_audits 
                 (idp, type_audit, auditeur, zone, equipe, semaine, annee, date_audit, score_pourcentage, nb_ok, nb_nok, total_questions, details_json, appareil)
                 VALUES (:idp, :type_audit, :auditeur, :zone, :equipe, :semaine, :annee, :date_audit, :score, :nb_ok, :nb_nok, :total_q, :details_json, :appareil)
-            """, {
+            """), {
                 "idp": idp,
                 "type_audit": type_audit,
                 "auditeur": auditeur,
@@ -581,14 +582,14 @@ elif page == "⚙️ Paramètres / Admin":
                         new_score = round((e_ok / new_total * 100), 1) if new_total > 0 else 0
                         
                         with conn.session as s:
-                            s.execute("""
+                            s.execute(text("""
                                 UPDATE historique_audits 
                                 SET type_audit = :type_audit, auditeur = :auditeur, zone = :zone, 
                                     equipe = :equipe, semaine = :semaine, annee = :annee, 
                                     nb_ok = :nb_ok, nb_nok = :nb_nok, total_questions = :total_questions, 
                                     score_pourcentage = :score_pourcentage 
                                 WHERE id = :id
-                            """, {
+                            """), {
                                 "type_audit": e_type,
                                 "auditeur": e_auditeur,
                                 "zone": e_zone,
@@ -609,7 +610,7 @@ elif page == "⚙️ Paramètres / Admin":
                 st.markdown("---")
                 if st.button("🗑️ Supprimer cet audit définitivement", type="primary", use_container_width=True):
                     with conn.session as s:
-                        s.execute("DELETE FROM historique_audits WHERE id = :id", {"id": selected_id})
+                        s.execute(text("DELETE FROM historique_audits WHERE id = :id"), {"id": selected_id})
                         s.commit()
                     st.success(f"Audit #{selected_id} supprimé avec succès !")
                     st.rerun()
