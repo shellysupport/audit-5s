@@ -28,8 +28,16 @@ st.set_page_config(
 )
 
 # --- BASE DE DONNÉES SUPABASE (POSTGRESQL) ---
-from sqlalchemy import create_engine
 
+
+import streamlit as st
+import pandas as pd
+from sqlalchemy import create_engine, text
+from datetime import datetime
+import json
+
+# --- GESTION DE LA CONNEXION SQLAlchemy ---
+@st.cache_resource
 def get_db_connection():
     # Récupération directe de l'URL depuis les secrets et création du moteur SQLAlchemy avec psycopg2
     db_url = st.secrets["connections"]["postgresql"]["url"]
@@ -37,40 +45,40 @@ def get_db_connection():
     return engine
 
 def init_db():
-    conn = get_db_connection()
-    with conn.session as s:
-        s.execute(text("""
+    engine = get_db_connection()
+    with engine.begin() as conn:
+        conn.execute(text("""
             CREATE TABLE IF NOT EXISTS auditeurs (
-                id SERIAL PRIMARY KEY, 
+                id SERIAL PRIMARY KEY,
                 nom TEXT UNIQUE NOT NULL
             );
         """))
-        s.execute(text("""
+        conn.execute(text("""
             CREATE TABLE IF NOT EXISTS zones (
-                id SERIAL PRIMARY KEY, 
+                id SERIAL PRIMARY KEY,
                 nom TEXT UNIQUE NOT NULL
             );
         """))
-        s.execute(text("""
+        conn.execute(text("""
             CREATE TABLE IF NOT EXISTS equipements (
-                id SERIAL PRIMARY KEY, 
+                id SERIAL PRIMARY KEY,
                 nom TEXT UNIQUE NOT NULL
             );
         """))
-        s.execute(text("""
+        conn.execute(text("""
             CREATE TABLE IF NOT EXISTS emails (
-                id SERIAL PRIMARY KEY, 
-                label TEXT NOT NULL, 
+                id SERIAL PRIMARY KEY,
+                label TEXT NOT NULL,
                 email TEXT UNIQUE NOT NULL
             );
         """))
-        s.execute(text("""
+        conn.execute(text("""
             CREATE TABLE IF NOT EXISTS config (
-                key TEXT PRIMARY KEY, 
+                key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             );
         """))
-        s.execute(text("""
+        conn.execute(text("""
             CREATE TABLE IF NOT EXISTS historique_audits (
                 id SERIAL PRIMARY KEY,
                 idp TEXT,
@@ -89,46 +97,44 @@ def init_db():
                 appareil TEXT
             );
         """))
-        s.execute(text("""
+        conn.execute(text("""
             CREATE TABLE IF NOT EXISTS questions (
-                id SERIAL PRIMARY KEY, 
-                type_audit TEXT NOT NULL, 
-                categorie TEXT NOT NULL, 
+                id SERIAL PRIMARY KEY,
+                type_audit TEXT NOT NULL,
+                categorie TEXT NOT NULL,
                 intitule TEXT NOT NULL,
                 ordre INTEGER DEFAULT 0
             );
         """))
-        s.commit()
 
     # Ajout sécurisé des colonnes si elles n'existent pas
-    with conn.session as s:
+    with engine.begin() as conn:
         try:
-            s.execute(text("ALTER TABLE historique_audits ADD COLUMN IF NOT EXISTS details_json TEXT;"))
+            conn.execute(text("ALTER TABLE historique_audits ADD COLUMN IF NOT EXISTS details_json TEXT;"))
         except Exception:
             pass
         try:
-            s.execute(text("ALTER TABLE historique_audits ADD COLUMN IF NOT EXISTS appareil TEXT;"))
+            conn.execute(text("ALTER TABLE historique_audits ADD COLUMN IF NOT EXISTS appareil TEXT;"))
         except Exception:
             pass
-        s.commit()
 
     # Initialisation des données par défaut si tables vides
-    with conn.session as s:
-        res = s.execute(text("SELECT COUNT(*) FROM auditeurs")).fetchone()
+    with engine.begin() as conn:
+        res = conn.execute(text("SELECT COUNT(*) FROM auditeurs")).fetchone()
         if res[0] == 0:
-            s.execute(text("INSERT INTO auditeurs (nom) VALUES ('BESSEM FEKIH'), ('Yosri Fadhly') ON CONFLICT DO NOTHING"))
-            
-        res = s.execute(text("SELECT COUNT(*) FROM zones")).fetchone()
+            conn.execute(text("INSERT INTO auditeurs (nom) VALUES ('BESSEM FEKIH'), ('Yosri Fadhly') ON CONFLICT DO NOTHING"))
+           
+        res = conn.execute(text("SELECT COUNT(*) FROM zones")).fetchone()
         if res[0] == 0:
-            s.execute(text("INSERT INTO zones (nom) VALUES ('AUTOMATISME'), ('LIGNE 1'), ('UPS') ON CONFLICT DO NOTHING"))
+            conn.execute(text("INSERT INTO zones (nom) VALUES ('AUTOMATISME'), ('LIGNE 1'), ('UPS') ON CONFLICT DO NOTHING"))
 
-        res = s.execute(text("SELECT COUNT(*) FROM equipements")).fetchone()
+        res = conn.execute(text("SELECT COUNT(*) FROM equipements")).fetchone()
         if res[0] == 0:
-            s.execute(text("INSERT INTO equipements (nom) VALUES ('FI506'), ('FI507'), ('Robot de Soudure 02') ON CONFLICT DO NOTHING"))
+            conn.execute(text("INSERT INTO equipements (nom) VALUES ('FI506'), ('FI507'), ('Robot de Soudure 02') ON CONFLICT DO NOTHING"))
 
-        res = s.execute(text("SELECT COUNT(*) FROM emails")).fetchone()
+        res = conn.execute(text("SELECT COUNT(*) FROM emails")).fetchone()
         if res[0] == 0:
-            s.execute(text("INSERT INTO emails (label, email) VALUES ('Responsable Atelier', 'yosri.fadhly@somfy.com') ON CONFLICT DO NOTHING"))
+            conn.execute(text("INSERT INTO emails (label, email) VALUES ('Responsable Atelier', 'yosri.fadhly@somfy.com') ON CONFLICT DO NOTHING"))
 
         default_config = {
             "admin_password": "admin",
@@ -138,15 +144,13 @@ def init_db():
             "smtp_password": "rzftdozwqntssiwa"
         }
         for k, v in default_config.items():
-            s.execute(text("INSERT INTO config (key, value) VALUES (:key, :val) ON CONFLICT (key) DO NOTHING"), {"key": k, "val": v})
+            conn.execute(text("INSERT INTO config (key, value) VALUES (:key, :val) ON CONFLICT (key) DO NOTHING"), {"key": k, "val": v})
 
-        res = s.execute(text("SELECT COUNT(*) FROM questions")).fetchone()
+        res = conn.execute(text("SELECT COUNT(*) FROM questions")).fetchone()
         if res[0] == 0:
-            seed_default_questions(s)
+            seed_default_questions(conn)
 
-        s.commit()
-
-def seed_default_questions(session):
+def seed_default_questions(conn):
     q_5s = [
         ("S1 – DÉBARRASSER", "Est-ce qu'il y a du matériel / fournitures / machines / équipement Inutiles ?"),
         ("S1 – DÉBARRASSER", "Est-ce qu'il y a du matériel / fourniture / machines / équipement Endommagé ?"),
@@ -161,7 +165,7 @@ def seed_default_questions(session):
         ("S5 – MAINTENIR", "Quelles sont les dernières actions réalisées par le GAP ?")
     ]
     for cat, q in q_5s:
-        session.execute(text("INSERT INTO questions (type_audit, categorie, intitule) VALUES ('5S', :cat, :q)"), {"cat": cat, "q": q})
+        conn.execute(text("INSERT INTO questions (type_audit, categorie, intitule) VALUES ('5S', :cat, :q)"), {"cat": cat, "q": q})
 
     q_am = [
         ("État du poste de travail", "Le management visuel est présent et en place."),
@@ -182,55 +186,52 @@ def seed_default_questions(session):
         ("Traçabilité et Enregistrement", "Les actions issues des audits AM précédents sont suivis en SIM PROD et clôturées.")
     ]
     for cat, q in q_am:
-        session.execute(text("INSERT INTO questions (type_audit, categorie, intitule) VALUES ('AM', :cat, :q)"), {"cat": cat, "q": q})
+        conn.execute(text("INSERT INTO questions (type_audit, categorie, intitule) VALUES ('AM', :cat, :q)"), {"cat": cat, "q": q})
 
 init_db()
 
 def get_config_val(key):
-    conn = get_db_connection()
-    df = conn.query("SELECT value FROM config WHERE key = :key;", params={"key": key}, ttl=0)
+    engine = get_db_connection()
+    df = pd.read_sql(text("SELECT value FROM config WHERE key = :key;"), con=engine, params={"key": key})
     if not df.empty:
         return df.iloc[0]['value']
     return ""
 
 def set_config_val(key, value):
-    conn = get_db_connection()
-    with conn.session as s:
-        s.execute(text("INSERT INTO config (key, value) VALUES (:key, :val) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;"), {"key": key, "val": value})
-        s.commit()
+    engine = get_db_connection()
+    with engine.begin() as conn:
+        conn.execute(text("INSERT INTO config (key, value) VALUES (:key, :val) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;"), {"key": key, "val": value})
 
 def get_items(table):
-    conn = get_db_connection()
-    df = conn.query(f"SELECT * FROM {table} ORDER BY id ASC;", ttl=0)
+    engine = get_db_connection()
+    df = pd.read_sql(text(f"SELECT * FROM {table} ORDER BY id ASC;"), con=engine)
     return df.to_dict(orient="records")
 
 def add_item(table, columns, values):
-    conn = get_db_connection()
+    engine = get_db_connection()
     cols_str = ", ".join(columns)
     params = {f"v{i}": val for i, val in enumerate(values)}
     placeholders = ", ".join([f":v{i}" for i in range(len(values))])
-    
+   
     try:
-        with conn.session as s:
-            s.execute(text(f"INSERT INTO {table} ({cols_str}) VALUES ({placeholders})"), params)
-            s.commit()
+        with engine.begin() as conn:
+            conn.execute(text(f"INSERT INTO {table} ({cols_str}) VALUES ({placeholders})"), params)
         st.toast("✅ Ajouté avec succès !")
     except Exception as e:
         st.error(f"⚠️ Cet élément existe déjà ou une erreur est survenue : {e}")
 
 def delete_item(table, item_id):
-    conn = get_db_connection()
-    with conn.session as s:
-        s.execute(text(f"DELETE FROM {table} WHERE id = :id"), {"id": item_id})
-        s.commit()
+    engine = get_db_connection()
+    with engine.begin() as conn:
+        conn.execute(text(f"DELETE FROM {table} WHERE id = :id"), {"id": item_id})
 
 def save_audit_in_history(idp, type_audit, auditeur, zone, equipe, semaine, annee, score, nb_ok, nb_nok, total_q, reponses_dict_raw, appareil):
-    conn = get_db_connection()
-    with conn.session as s:
-        existing = s.execute(text("SELECT id FROM historique_audits WHERE idp = :idp"), {"idp": idp}).fetchone()
+    engine = get_db_connection()
+    with engine.begin() as conn:
+        existing = conn.execute(text("SELECT id FROM historique_audits WHERE idp = :idp"), {"idp": idp}).fetchone()
         if existing is None:
             date_str = datetime.now().strftime("%Y-%m-%d %H:%M")
-            
+           
             serializable_reponses = {}
             for k, v in reponses_dict_raw.items():
                 serializable_reponses[str(k)] = {
@@ -239,8 +240,8 @@ def save_audit_in_history(idp, type_audit, auditeur, zone, equipe, semaine, anne
                 }
             details_str = json.dumps(serializable_reponses)
 
-            s.execute(text("""
-                INSERT INTO historique_audits 
+            conn.execute(text("""
+                INSERT INTO historique_audits
                 (idp, type_audit, auditeur, zone, equipe, semaine, annee, date_audit, score_pourcentage, nb_ok, nb_nok, total_questions, details_json, appareil)
                 VALUES (:idp, :type_audit, :auditeur, :zone, :equipe, :semaine, :annee, :date_audit, :score, :nb_ok, :nb_nok, :total_q, :details_json, :appareil)
             """), {
@@ -259,12 +260,11 @@ def save_audit_in_history(idp, type_audit, auditeur, zone, equipe, semaine, anne
                 "details_json": details_str,
                 "appareil": appareil
             })
-            s.commit()
 
 def get_questions_with_ids(type_audit):
-    conn = get_db_connection()
-    df = conn.query("SELECT id, categorie, intitule FROM questions WHERE type_audit = :type_audit ORDER BY id ASC", params={"type_audit": type_audit}, ttl=0)
-    
+    engine = get_db_connection()
+    df = pd.read_sql(text("SELECT id, categorie, intitule FROM questions WHERE type_audit = :type_audit ORDER BY id ASC"), con=engine, params={"type_audit": type_audit})
+   
     questions_dict = {}
     for _, r in df.iterrows():
         cat = r['categorie']
@@ -274,9 +274,9 @@ def get_questions_with_ids(type_audit):
     return questions_dict
 
 def get_questions_dict(type_audit):
-    conn = get_db_connection()
-    df = conn.query("SELECT categorie, intitule FROM questions WHERE type_audit = :type_audit ORDER BY id ASC", params={"type_audit": type_audit}, ttl=0)
-    
+    engine = get_db_connection()
+    df = pd.read_sql(text("SELECT categorie, intitule FROM questions WHERE type_audit = :type_audit ORDER BY id ASC"), con=engine, params={"type_audit": type_audit})
+   
     questions_dict = {}
     for _, r in df.iterrows():
         cat = r['categorie']
@@ -286,6 +286,7 @@ def get_questions_dict(type_audit):
     return questions_dict
 
 # --- FONCTION DE GÉNÉRATION DU PDF ---
+
 def generate_pdf_report(audit_title, idp, auditeur, zone, equipe, semaine, annee, reponses, type_code, taux, nb_ok, nb_nok, total_q):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36)
