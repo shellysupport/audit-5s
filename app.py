@@ -28,10 +28,13 @@ st.set_page_config(
 )
 
 # --- BASE DE DONNÉES SUPABASE (POSTGRESQL) ---
+from sqlalchemy import create_engine
+
 def get_db_connection():
-    # Utilisation de la connexion configurée dans les Secrets Streamlit
-    conn = st.connection("postgresql", type="sql")
-    return conn
+    # Récupération directe de l'URL depuis les secrets et création du moteur SQLAlchemy avec psycopg2
+    db_url = st.secrets["connections"]["postgresql"]["url"]
+    engine = create_engine(db_url)
+    return engine
 
 def init_db():
     conn = get_db_connection()
